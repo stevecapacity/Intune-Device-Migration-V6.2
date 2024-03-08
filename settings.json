@@ -1,0 +1,18 @@
+{
+    "localPath":"C:\\ProgramData\\IntuneMigration",
+    "logPath":"C:\\ProgramData\\Microsoft\\IntuneManagementExtension\\Logs",
+    "sourceTenant": {
+        "clientId":"<sourceClientID>",
+        "clientSecret":"<sourceClientSecret>",
+        "tenantName":"<sourceTenantName>"
+    },
+    "targetTenant":{
+        "clientId":"<targetClientID>",
+        "clientSecret":"<targetClientSecret>",
+        "tenantName":"<targetTenantName>",
+        "tenantId":"<targetTenantID>"
+    },
+    "groupTag":"<ADD GROUP TAG OR LEAVE EMPTY>",
+    "regPath":"HKLM\\SOFTWARE\\IntuneMigration",
+    "bitlockerMethod":"<MIGRATE/DECRYPT>"
+}
