@@ -469,8 +469,6 @@ function setLockScreenCaption()
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$true)]
-        [string]$targetTenantName,
-        [Parameter(Mandatory=$true)]
         [string]$caption,
         [Parameter(Mandatory=$true)]
         [string]$text,

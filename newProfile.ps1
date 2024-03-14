@@ -81,3 +81,73 @@ foreach($x in $user.Keys)
         exitScript -exitCode 1 -functionName "writeNewUserProperties"
     }
 }
+
+# enable auto logon
+log "Enabling auto logon..."
+try
+{
+    toggleAutoLogon -status "enabled"
+    log "FUNCTION: toggleAutoLogon completed successfully."
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "FUNCTION: toggleAutoLogon failed. $message"
+    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
+    exitScript -exitCode 1 -functionName "toggleAutoLogon"
+}
+
+# revoke logon provider
+log "Revoking logon provider..."
+try
+{
+    toggleLogonProvider -status "disabled"
+    log "FUNCTION: revokeLogonProvider completed successfully."
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "FUNCTION: revokeLogonProvider failed. $message"
+    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
+    exitScript -exitCode 1 -functionName "revokeLogonProvider"
+}
+
+# set lock screen caption
+log "Setting lock screen caption..."
+try
+{
+    setLockScreenCaption -caption "Almost there..." -text "Your PC will restart one more time to join the $($settings.targetTenant.tenantName) environment."
+    log "Lock screen caption set."
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to set lock screen caption: $message"
+    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
+    exitScript -exitCode 1 -functionName "setLockScreenCaption"
+}
+
+# set final migration tasks
+log "Setting post migration tasks..."
+$tasks = @("finalBoot")
+foreach($task in $tasks)
+{
+    $taskPath = "$($settings.localPath)\$($task).xml"
+    if($taskPath)
+    {
+        schtasks.exe /Create /TN $task /XML $taskPath
+        log "Post migration task created: $task"
+    }
+    else
+    {
+        log "Post migration task not found: $task"
+    }
+}
+
+log "Post migration tasks set."
+log "Exiting script"
+
+Stop-Transcript
+
+shutdown -r -t 00
+
