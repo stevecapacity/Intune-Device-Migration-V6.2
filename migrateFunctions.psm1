@@ -106,11 +106,8 @@ function initializeScript()
         [Parameter(Mandatory=$false)]
         [bool]$installTag,
         [Parameter(Mandatory=$true)]
-        [string]$logName,
-        [string]$logPath = $settings.logPath,
-        [string]$localPath = $settings.localPath
+        [string]$localPath = "C:\ProgramData\IntuneMigration"
     )
-    Start-Transcript -Path "$($logPath)\$($logName).log" -Verbose
     log "Initializing script..."
     if(!(Test-Path $localPath))
     {
@@ -278,24 +275,16 @@ function newUserObject()
         [string]$azureAdJoined,
         [string]$user = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object UserName).UserName,
         [string]$SID = (New-Object System.Security.Principal.NTAccount($user)).Translate([System.Security.Principal.SecurityIdentifier]).Value,
+        [string]$upn = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\LogonCache\$($SID)\Name2SID\$($SID)" -Name "IdentityName"),
         [string]$profilePath = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($SID)" -Name "ProfileImagePath"),
         [string]$SAMName = ($user).Split("\")[1]
     )
-    if($domainJoined -eq "NO")
+    if($azureAdJoined -eq "YES")
     {
-        $upn = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache\$($SID)\IdentityCache\$($SID)" -Name "UserName")
-        if($azureAdJoined -eq "YES")
-        {
-            $aadId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/users/$($upn)" -Headers $headers).id
-        }
-        else
-        {
-            $aadId = $null
-        }
+        $aadId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/users/$($upn)" -Headers $headers).id
     }
     else
     {
-        $upn = $null
         $aadId = $null
     }
     $userObject = @{

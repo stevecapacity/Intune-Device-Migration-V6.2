@@ -30,11 +30,13 @@ catch
     exitScript -exitCode 4 -functionName "getSettingsJSON"
 }
 
+Start-Transcript -Path "$($settings.logPath)\postMigrate.log" -Verbose
+
 # initialize script function
 log "Running FUNCTION: initializeScript..."
 try
 {
-    initializeScript -logName "postMigrate"
+    initializeScript
     log "FUNCTION: initializeScript completed successfully."
 }
 catch

@@ -30,11 +30,13 @@ catch
     exitScript -exitCode 1 -functionName "getSettingsJSON"
 }
 
+Start-Transcript -Path "$($settings.logPath)\newProfile.log" -Verbose
+
 # initialize script function
 log "Running FUNCTION: initializeScript..."
 try
 {
-    initializeScript -logName "newProfile"
+    initializeScript
     log "FUNCTION: initializeScript completed successfully."
 }
 catch

@@ -33,11 +33,13 @@ catch
     exitScript -exitCode 4 -functionName "getSettingsJSON"
 }
 
+Start-Transcript -Path "$($settings.logPath)\startMigrate.log" -Verbose
+
 # Running FUNCTION: initializeScript
 log "Running FUNCTION: initializeScript..."
 try 
 {
-    initializeScript -installTag:$true -logName "startMigrate"
+    initializeScript -installTag:$true
     log "FUNCTION: initializeScript completed successfully"     
 }
 catch 
@@ -55,7 +57,7 @@ foreach($file in $packageFiles)
     $destination = $settings.localPath
     try 
     {
-        Copy-Path -Path $file.FullName -Destination $destination -Recurse -Force
+        Copy-Item -Path $file.FullName -Destination $destination -Recurse -Force
         Log "File copied: $($file.FullName) to $($destination)"
     }
     catch 
@@ -310,7 +312,7 @@ if($pc.mdm -eq $true)
 log "Running FUNCTION: toggleLoginProvider..."
 try
 {
-    toggleLoginProvider -status "disabled"
+    toggleLogonProvider -status "disabled"
     log "FUNCTION: toggleLoginProvider completed successfully"
 }
 catch

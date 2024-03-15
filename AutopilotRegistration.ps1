@@ -30,11 +30,14 @@ catch
     exitScript -exitCode 4 -functionName "getSettingsJSON"
 }
 
+Start-Transcript -Path "$($settings.logPath)\AutopilotRegistration.log" -Verbose
+
+
 # initialize script function
 log "Running FUNCTION: initializeScript..."
 try
 {
-    initializeScript -logName "autopilotRegistration"
+    initializeScript
     log "FUNCTION: initializeScript completed successfully."
 }
 catch

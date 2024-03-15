@@ -30,11 +30,13 @@ catch
     exitScript -exitCode 1 -functionName "getSettingsJSON"
 }
 
+Start-Transcript -Path "$($settings.logPath)\finalBoot.log" -Verbose
+
 # initialize script function
 log "Running FUNCTION: initializeScript..."
 try
 {
-    initializeScript -logName "finalBoot"
+    initializeScript
     log "FUNCTION: initializeScript completed successfully."
 }
 catch
