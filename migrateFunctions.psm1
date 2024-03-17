@@ -106,7 +106,7 @@ function initializeScript()
         [Parameter(Mandatory=$false)]
         [bool]$installTag,
         [Parameter(Mandatory=$true)]
-        [string]$localPath = "C:\ProgramData\IntuneMigration"
+        [string]$localPath = $settings.localPath
     )
     log "Initializing script..."
     if(!(Test-Path $localPath))

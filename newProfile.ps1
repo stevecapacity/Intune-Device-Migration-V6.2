@@ -13,143 +13,267 @@ Jesse Weimer
 #>
 
 $ErrorActionPreference = "SilentlyContinue"
-Import-Module "$($PSScriptRoot)\migrationFunctions.psm1"
+# CMDLET FUNCTIONS
 
-# get settings json function
-log "Running FUNCTION: getSettingsJSON..."
-try 
+# set log function
+function log()
 {
-    $settings = getSettingsJSON
-    log "FUNCTION: getSettingsJSON completed successfully."
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: getSettingsJSON failed. $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "getSettingsJSON"
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)]
+        [string]$message
+    )
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss tt"
+    Write-Output "$ts $message"
 }
 
-Start-Transcript -Path "$($settings.logPath)\newProfile.log" -Verbose
+# CMDLET FUNCTIONS
 
-# initialize script function
-log "Running FUNCTION: initializeScript..."
-try
+# START SCRIPT FUNCTIONS
+
+# get json settings
+function getSettingsJSON()
 {
-    initializeScript
-    log "FUNCTION: initializeScript completed successfully."
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: initializeScript failed. $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "initializeScript"
+    param(
+        [string]$json = "settings.json"
+    )
+    $global:settings = Get-Content -Path "$($PSScriptRoot)\$($json)" | ConvertFrom-Json
+    return $settings
 }
 
-# disable newProfile Task
-log "Disable newProfile task..."
-Disable-ScheduledTask -TaskName "newProfile" -ErrorAction SilentlyContinue
-log "newProfile task disabled."
-
-# construct new user object
-log "Running FUNCTION: newUserObject..."
-try
+# initialize script
+function initializeScript()
 {
-    $user = newUserObject -domainJoined "NO" -azureAdJoined "YES"
-    log "FUNCTION: newUserObject completed successfully."
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: newUserObject failed. $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "newUserObject"
-}
-
-# write new user properties to registry
-log "Writing NEW User properties to registry..."
-foreach($x in $user.Keys)
-{
-    try
+    Param(
+        [string]$logPath = $settings.logPath,
+        [string]$logName = "newProfile.log",
+        [string]$localPath = $settings.localPath
+    )
+    Start-Transcript -Path "$logPath\$logName" -Verbose
+    log "Initializing script..."
+    if(!(Test-Path $localPath))
     {
-        reg.exe add $($settings.regPath) /v "NEW_$($x)" /t REG_SZ /d $($user[$x]) /f | Out-Host
+        mkdir $localPath
+        log "Local path created: $localPath"
     }
-    catch
+    else
     {
-        $message = $_.Exception.Message
-        log "Failed to write $x to registry: $message"
-        log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-        exitScript -exitCode 1 -functionName "writeNewUserProperties"
+        log "Local path already exists: $localPath"
+    }
+    $global:localPath = $localPath
+    $context = whoami
+    log "Running as $($context)"
+    log "Script initialized"
+    return $localPath
+}
+
+# get new user SID
+function getNewUserSID()
+{
+    Param(
+        [string]$regPath = $settings.regPath,
+        [string]$newUser = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty UserName),
+        [string]$newUserSID = (New-Object System.Security.Principal.NTAccount($newUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    )
+    log "New user: $newUser"
+    if(![string]::IsNullOrEmpty($newUserSID))
+    {
+        reg.exe add $regPath /v "NewUserSID" /t REG_SZ /d $newUserSID /f | Out-Host
+        log "SID written to registry"
+    
+    }
+    else
+    {
+        log "New user SID not found"
     }
 }
 
-# enable auto logon
-log "Enabling auto logon..."
-try
+# disable newProfile task
+function disableNewProfileTask()
 {
-    toggleAutoLogon -status "enabled"
-    log "FUNCTION: toggleAutoLogon completed successfully."
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: toggleAutoLogon failed. $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "toggleAutoLogon"
+    Param(
+        [string]$taskName = "newProfile"
+    )
+    Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    log "newProfile task disabled"    
 }
 
 # revoke logon provider
-log "Revoking logon provider..."
+function revokeLogonProvider()
+{
+    Param(
+        [string]$logonProviderPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}",
+        [string]$logonProviderName = "Disabled",
+        [int]$logonProviderValue = 1
+    )
+    reg.exe add $logonProviderPath /v $logonProviderName /t REG_DWORD /d $logonProviderValue /f | Out-Host
+    log "Revoked logon provider."
+}
+
+# set lock screen caption
+function setLockScreenCaption()
+{
+    Param(
+        [string]$targetTenantName = $settings.targetTenant.tenantName,
+        [string]$legalNoticeRegPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+        [string]$legalNoticeCaption = "legalnoticecaption",
+        [string]$legalNoticeCaptionValue = "Almost there...",
+        [string]$legalNoticeText = "legalnoticetext",
+        [string]$legalNoticeTextValue = "Your PC will restart one more time to join the $($targetTenantName) environment."
+    )
+    log "Setting lock screen caption..."
+    reg.exe add $legalNoticeRegPath /v $legalNoticeCaption /t REG_SZ /d $legalNoticeCaptionValue /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v $legalNoticeText /t REG_SZ /d $legalNoticeTextValue /f | Out-Host
+    log "Set lock screen caption."
+}
+
+# enable auto logon
+function enableAutoLogon()
+{
+    Param(
+        [string]$autoLogonPath = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
+        [string]$autoLogonName = "AutoAdminLogon",
+        [string]$autoLogonValue = 1
+    )
+    log "Enabling auto logon..."
+    reg.exe add $autoLogonPath /v $autoLogonName /t REG_SZ /d $autoLogonValue /f | Out-Host
+    log "Auto logon enabled."
+}
+
+# set finalBoot task
+function setFinalBootTask()
+{
+    Param(
+        [string]$taskName = "finalBoot",
+        [string]$taskXML = "$($localPath)\$($taskName).xml"
+    )
+    log "Setting $($taskName) task..."
+    if($taskXML)
+    {
+        schtasks.exe /Create /TN $taskName /XML $taskXML
+        log "$($taskName) task set."
+    }
+    else
+    {
+        log "Failed to set $($taskName) task: $taskXML not found"
+    }
+}
+
+# END SCRIPT FUNCTIONS
+
+# START SCRIPT
+
+# get settings
 try
 {
-    toggleLogonProvider -status "disabled"
-    log "FUNCTION: revokeLogonProvider completed successfully."
+    getSettingsJSON
+    log "Settings retrieved"
 }
 catch
 {
     $message = $_.Exception.Message
-    log "FUNCTION: revokeLogonProvider failed. $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "revokeLogonProvider"
+    log "Settings not loaded: $message"
+    log "Exiting script"
+    Exit 1
+}
+
+# initialize script
+try
+{
+    initializeScript
+    log "Script initialized"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to initialize script: $message"
+    log "Exiting script"
+    Exit 1
+}
+
+# get new user SID
+try
+{
+    getNewUserSID
+    log "New user SID retrieved"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to get new user SID: $message"
+    log "Exiting script"
+    Exit 1
+}
+
+# disable newProfile task
+try
+{
+    disableNewProfileTask
+    log "newProfile task disabled"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to disable newProfile task: $message"
+    log "Exiting script"
+    Exit 1
+}
+
+# revoke logon provider
+try
+{
+    revokeLogonProvider
+    log "Logon provider revoked"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to revoke logon provider: $message"
+    log "WARNING: Logon provider not revoked"
 }
 
 # set lock screen caption
-log "Setting lock screen caption..."
 try
 {
-    setLockScreenCaption -caption "Almost there..." -text "Your PC will restart one more time to join the $($settings.targetTenant.tenantName) environment."
-    log "Lock screen caption set."
+    setLockScreenCaption
+    log "Lock screen caption set"
 }
 catch
 {
     $message = $_.Exception.Message
     log "Failed to set lock screen caption: $message"
-    log "Exiting script with critical error.  After reboot, login with admin credentials for more information."
-    exitScript -exitCode 1 -functionName "setLockScreenCaption"
+    log "WARNING: Lock screen caption not set"
 }
 
-# set final migration tasks
-log "Setting post migration tasks..."
-$tasks = @("finalBoot")
-foreach($task in $tasks)
+# enable auto logon
+try
 {
-    $taskPath = "$($settings.localPath)\$($task).xml"
-    if($taskPath)
-    {
-        schtasks.exe /Create /TN $task /XML $taskPath
-        log "Post migration task created: $task"
-    }
-    else
-    {
-        log "Post migration task not found: $task"
-    }
+    enableAutoLogon
+    log "Auto logon enabled"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to enable auto logon: $message"
+    log "WARNING: Auto logon not enabled"
 }
 
-log "Post migration tasks set."
-log "Exiting script"
+# set finalBoot task
+try
+{
+    setFinalBootTask
+    log "finalBoot task set"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to set finalBoot task: $message"
+    log "Exiting script"
+    Exit 1
+}
 
-Stop-Transcript
+Start-Sleep -Seconds 2
+log "rebooting computer"
 
 shutdown -r -t 00
-
+Stop-Transcript

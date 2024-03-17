@@ -16,438 +16,841 @@ Jesse Weimer
 #>
 
 $ErrorActionPreference = "SilentlyContinue"
-Import-Module "$($PSScriptRoot)\migrateFunctions.psm1"
+# CMDLET FUNCTIONS
 
-# Running FUNCTION: getSettingsJSON
-log "Running FUNCTION: getSettingsJSON..."
-try 
+# set log function
+function log()
 {
-    $settings = getSettingsJSON
-    log "FUNCTION: getSettingsJSON completed successfully"     
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: getSettingsJSON failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "getSettingsJSON"
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory=$true)]
+        [string]$message
+    )
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss tt"
+    Write-Output "$ts $message"
 }
 
-Start-Transcript -Path "$($settings.logPath)\startMigrate.log" -Verbose
-
-# Running FUNCTION: initializeScript
-log "Running FUNCTION: initializeScript..."
-try 
+# get dsreg status
+function joinStatus()
 {
-    initializeScript -installTag:$true
-    log "FUNCTION: initializeScript completed successfully"     
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: initializeScript failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "initializeScript"
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)]
+        [string]$joinType
+    )
+    $dsregStatus = dsregcmd.exe /status
+    $status = ($dsregStatus | Select-String $joinType).ToString().Split(":")[1].Trim()
+    return $status
 }
 
-# Copy package files
-$packageFiles = Get-ChildItem -Path "$($PSScriptRoot)\*" -Recurse
-foreach($file in $packageFiles)
+# function get admin status
+function getAdminStatus()
 {
-    $destination = $settings.localPath
-    try 
-    {
-        Copy-Item -Path $file.FullName -Destination $destination -Recurse -Force
-        Log "File copied: $($file.FullName) to $($destination)"
+    Param(
+        [string]$adminUser = "Administrator"
+    )
+    $adminStatus = (Get-LocalUser -Name $adminUser).Enabled
+    log "Administrator account is $($adminStatus)."
+    return $adminStatus
+}
+
+# generate random password
+function generatePassword {
+    Param(
+        [int]$length = 12
+    )
+    $charSet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:',<.>/?"
+    $securePassword = New-Object -TypeName System.Security.SecureString
+    1..$length | ForEach-Object {
+        $random = $charSet[(Get-Random -Minimum 0 -Maximum $charSet.Length)]
+        $securePassword.AppendChar($random)
     }
-    catch 
+    return $securePassword
+}
+
+# END CMDLET FUNCTIONS
+
+# SCRIPT FUNCTIONS START
+
+#  get json settings
+function getSettingsJSON()
+{
+    param(
+        [string]$json = "settings.json"
+    )
+    $global:settings = Get-Content -Path "$($PSScriptRoot)\$($json)" | ConvertFrom-Json
+    return $settings
+}
+
+# initialize script
+function initializeScript()
+{
+    Param(
+        [string]$localPath = $settings.localPath,
+        [string]$logPath = $settings.logPath,
+        [string]$installTag = "$($localPath)\install.tag",
+        [string]$logName = "startMigrate.log"
+    )
+    Start-Transcript -Path "$logPath\$logName" -Verbose
+    log "Initializing script..."
+    if(!(Test-Path $localPath))
     {
-        $message = $_.Exception.Message
-        log "Copy-Path failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "Copy-Path"
+        mkdir $localPath
+        log "Created $($localPath)."
     }
+    else
+    {
+        log "$($localPath) already exists."
+    }
+    $global:localPath = $localPath
+    $context = whoami
+    log "Running as $($context)."
+    New-Item -Path $installTag -ItemType file -Force
+    log "Created $($installTag)."
+    return $localPath
+}
+
+# copy package files
+function copyPackageFiles()
+{
+    Param(
+        [string]$destination = $localPath
+    )
+    Copy-Item -Path "$($PSScriptRoot)\*" -Destination $destination -Recurse -Force
+    log "Copied files to $($destination)."
 }
 
 # authenticate to source tenant
-log "Running FUNCTION: msGraphAuthenticate..."
-try 
+function msGraphAuthenticate()
 {
-    msGraphAuthenticate -tenant $settings.sourceTenant.tenantName -clientId $settings.sourceTenant.clientId -clientSecret $settings.sourceTenant.clientSecret
-    log "FUNCTION: msGraphAuthenticate completed successfully"     
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: msGraphAuthenticate failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "msGraphAuthenticate"
+    Param(
+        [string]$tenant = $settings.sourceTenant.tenantName,
+        [string]$clientId = $settings.sourceTenant.clientId,
+        [string]$clientSecret = $settings.sourceTenant.clientSecret
+    )
+    $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+    $headers.Add("Content-Type", "application/x-www-form-urlencoded")
+
+    $body = "grant_type=client_credentials&scope=https://graph.microsoft.com/.default"
+    $body += -join ("&client_id=" , $clientId, "&client_secret=", $clientSecret)
+
+    $response = Invoke-RestMethod "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" -Method 'POST' -Headers $headers -Body $body
+
+    #Get Token form OAuth.
+    $token = -join ("Bearer ", $response.access_token)
+
+    #Reinstantiate headers.
+    $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+    $headers.Add("Authorization", $token)
+    $headers.Add("Content-Type", "application/json")
+    log "MS Graph Authenticated"
+    $global:headers = $headers
 }
 
-# construct device object
-log "Running FUNCTION: newDeviceObject..."
-try 
+# get device info
+function getDeviceInfo()
 {
-    $pc = newDeviceObject
-    log "FUNCTION: newDeviceObject completed successfully"     
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: newDeviceObject failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "newDeviceObject"
-}
-
-# Write OG PC properties to registry
-log "Writing OG PC properties to registry..."
-foreach($x in $pc.Keys)
-{
-    try 
-    {
-        reg.exe add $($settings.regPath) /v "OG_$($x)" /t REG_SZ /d $($pc[$x]) /f
-        log "Registry key added: $($settings.regPath) /v OG_$($x) /t REG_SZ /d $($pc[$x]) /f"
+    Param(
+        [string]$hostname = $env:COMPUTERNAME,
+        [string]$serialNumber = (Get-WmiObject -Class Win32_BIOS | Select-Object SerialNumber).SerialNumber,
+        [string]$osBuild = (Get-WmiObject -Class Win32_OperatingSystem | Select-Object BuildNumber).BuildNumber
+    )
+    $global:deviceInfo = @{
+        "hostname" = $hostname
+        "serialNumber" = $serialNumber
+        "osBuild" = $osBuild
     }
-    catch 
+    foreach($key in $deviceInfo.Keys)
     {
-        $message = $_.Exception.Message
-        log "Registry key add failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "reg.exe add"
+        log "$($key): $($deviceInfo[$key])"
     }
 }
 
-# construct user object
-log "Running FUNCTION: newUserObject..."
-try
+# get original user info
+function getOriginalUserInfo()
 {
-    $user = newUserObject -domainJoined $pc.domainJoined -azureAdJoined $pc.azureAdJoined
-    log "FUNCTION: newUserObject completed successfully"     
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: newUserObject failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "newUserObject"
-}
-
-# Write OG User properties to registry
-log "Writing OG User properties to registry..."
-foreach($x in $user.Keys)
-{
-    try 
-    {
-        reg.exe add $($settings.regPath) /v "OG_$($x)" /t REG_SZ /d $($user[$x]) /f
-        log "Registry key added: $($settings.regPath) /v OG_$($x) /t REG_SZ /d $($user[$x]) /f"
+    Param(
+        [string]$originalUser = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object UserName).UserName,
+        [string]$originalUserSID = (New-Object System.Security.Principal.NTAccount($originalUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value,
+        [string]$originalUserName = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache\$($originalUserSID)\IdentityCache\$($originalUserSID)" -Name "UserName"),
+        [string]$originalProfilePath = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($originalUserSID)" -Name "ProfileImagePath"),
+        [string]$regPath = $settings.regPath
+    )
+    $global:originalUserInfo = @{
+        "originalUser" = $originalUser
+        "originalUserSID" = $originalUserSID
+        "originalUserName" = $originalUserName
+        "originalProfilePath" = $originalProfilePath
     }
-    catch 
+    foreach($key in $originalUserInfo.Keys)
     {
-        $message = $_.Exception.Message
-        log "Registry key add failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "reg.exe add"
-    }
-}
-
-# set account connection policy
-log "Running FUNCTION: setAccountConnectionPolicy..."
-$currentAccountConnectionValue = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Accounts" -Name "AllowMicrosoftAccountConnection"
-if($currentAccountConnectionValue -eq 1)
-{
-    log "Account connection policy already set to 1"
-}
-else
-{
-    log "Setting account connection policy to 1"
-    try 
-    {
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Accounts" -Name "AllowMicrosoftAccountConnection" -Value 1
-        log "Account connection policy set to 1"
-    }
-    catch 
-    {
-        $message = $_.Exception.Message
-        log "Set-ItemProperty failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "Set-ItemProperty"
-    }
-}
-
-# set don't display last signed in user
-log "Running FUNCTION: setDontDisplayLastSignedInUser..."
-$currentDontDisplayLastSignedInUserValue = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DontDisplayLastUserName"
-if($currentDontDisplayLastSignedInUserValue -eq 1)
-{
-    log "DontDisplayLastUserName already set to 1"
-}
-else
-{
-    log "Setting DontDisplayLastUserName to 1"
-    try 
-    {
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DontDisplayLastUserName" -Value 1
-        log "DontDisplayLastUserName set to 1"
-    }
-    catch 
-    {
-        $message = $_.Exception.Message
-        log "Set-ItemProperty failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "Set-ItemProperty"
-    }
-}
-
-# remove previous MDM enrollments
-log "Running FUNCTION: removeMDMEnrollments..."
-$enrollmentPath = "HKLM:\SOFTWARE\Microsoft\Enrollments\"
-$enrollments = Get-ChildItem -Path $enrollmentPath
-foreach($enrollment in $enrollments)
-{
-    $object = Get-ItemProperty Registry::$enrollment
-    $enrollPath = $enrollmentPath + $object.PSChildName
-    $key = Get-ItemProperty -Path $enrollPath -Name "DiscoveryServiceFullURL"
-    if($key)
-    {
-        log "Removing MDM enrollment: $($enrollPath)"
-        Remove-Item -Path $enrollPath -Recurse
-        log "MDM enrollment removed: $($enrollPath)"
-        $enrollId = $enrollPath.Split("\")[-1]
-        $additionalPaths = @(
-            "HKLM:\SOFTWARE\Microsoft\Enrollments\Status\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\EnterpriseResourceManager\Tracked\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\PolicyManager\AdmxInstalled\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\PolicyManager\Providers\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\Provinsioning\OMADM\Accounts\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Logger\$($enrollID)",
-            "HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Sessions\$($enrollID)"
-        )
-        foreach($path in $additionalPaths)
+        New-Variable -Name $key -Value $originalUserInfo[$key] -Scope Global -Force
+        if([string]::IsNullOrEmpty($originalUserInfo[$key]))
         {
-            if(Test-Path -Path $path)
+            log "Failed to set $($key) to registry."
+        }
+        else 
+        {
+            reg.exe add $regPath /v "$($key)" /t REG_SZ /d "$($originalUserInfo[$key])" /f | Out-Host
+            log "Set $($key) to $($originalUserInfo[$key]) at $regPath."
+        }
+    }
+}
+
+# get device info from source tenant
+function getDeviceGraphInfo()
+{
+    Param(
+        [string]$hostname = $deviceInfo.hostname,
+        [string]$serialNumber = $deviceInfo.serialNumber,
+        [string]$regPath = $settings.regPath,
+        [string]$groupTag = $settings.groupTag,
+        [string]$intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices",
+        [string]$autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
+    )
+    log "Getting Intune object for $($hostname)..."
+    $intuneObject = Invoke-RestMethod -Uri "$($intuneUri)?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers -Method Get
+    if(($intuneObject.'@odata.count') -eq 1)
+    {
+        $intuneID = $intuneObject.value.id
+        log "Intune ID: $($intuneID)"
+    }
+    else
+    {
+        log "Failed to get Intune object for $($hostname)."
+    }
+    log "Getting Autopilot object for $($hostname)..."
+    $autopilotObject = Invoke-RestMethod -Uri "$($autopilotUri)?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers -Method Get
+    if(($autopilotObject.'@odata.count') -eq 1)
+    {
+        $autopilotID = $autopilotObject.value.id
+        log "Autopilot ID: $($autopilotID)"
+    }
+    else
+    {
+        log "Failed to get Autopilot object for $($hostname)."
+    }
+    if([string]::IsNullOrEmpty($groupTag))
+    {
+        log "Group tag is not set in JSON; getting from graph..."
+        $groupTag = $autopilotObject.value.groupTag
+    }
+    else 
+    {
+        log "Group tag is set in JSON; using $($groupTag)."
+    }
+    $global:deviceGraphInfo = @{
+        "intuneID" = $intuneID
+        "autopilotID" = $autopilotID
+        "groupTag" = $groupTag
+    }
+    foreach($key in $global:deviceGraphInfo.Keys)
+    {
+        if([string]::IsNullOrEmpty($global:deviceGraphInfo[$key]))
+        {
+            log "Failed to set $($key) to registry."
+        }
+        else 
+        {
+            reg.exe add $regPath /v "$($key)" /t REG_SZ /d "$($global:deviceGraphInfo[$key])" /f | Out-Host
+            log "Set $($key) to $($global:deviceGraphInfo[$key]) at $regPath."
+        }
+    }
+}
+
+# set account creation policy
+function setAccountConnection()
+{
+    Param(
+        [string]$regPath = "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Accounts",
+        [string]$regKey = "Registry::$regPath",
+        [string]$regName = "AllowMicrosoftAccountConnection",
+        [int]$regValue = 1
+    )
+    $currentRegValue = Get-ItemPropertyValue -Path $regKey -Name $regName
+    if($currentRegValue -eq $regValue)
+    {
+        log "$($regName) is already set to $($regValue)."
+    }
+    else
+    {
+        reg.exe add $regPath /v $regName /t REG_DWORD /d $regValue /f | Out-Host
+        log "Set $($regName) to $($regValue) at $regPath."
+    }
+}
+
+# set dont display last user name policy
+function dontDisplayLastUsername()
+{
+    Param(
+        [string]$regPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+        [string]$regKey = "Registry::$regPath",
+        [string]$regName = "DontDisplayLastUserName",
+        [int]$regValue = 1
+    )
+    $currentRegValue = Get-ItemPropertyValue -Path $regKey -Name $regName
+    if($currentRegValue -eq $regValue)
+    {
+        log "$($regName) is already set to $($regValue)."
+    }
+    else
+    {
+        reg.exe add $regPath /v $regName /t REG_DWORD /d $regValue /f | Out-Host
+        log "Set $($regName) to $($regValue) at $regPath."
+    }
+}
+
+# remove mdm certificate
+function removeMDMCertificate()
+{
+    Param(
+        [string]$certPath = 'Cert:\LocalMachine\My',
+        [string]$issuer = "Microsoft Intune MDM Device CA"
+    )
+    Get-ChildItem -Path $certPath | Where-Object { $_.Issuer -match $issuer } | Remove-Item -Force
+    log "Removed $($issuer) certificate."
+}
+
+# remove mdm enrollment
+function removeMDMEnrollments()
+{
+    Param(
+        [string]$enrollmentPath = "HKLM:\SOFTWARE\Microsoft\Enrollments\"
+    )
+    $enrollments = Get-ChildItem -Path $enrollmentPath
+    foreach($enrollment in $enrollments)
+    {
+        $object = Get-ItemProperty Registry::$enrollment
+        $enrollPath = $enrollmentPath + $object.PSChildName
+        $key = Get-ItemProperty -Path $enrollPath -Name "DiscoveryServiceFullURL"
+        if($key)
+        {
+            log "Removing $($enrollPath)..."
+            Remove-Item -Path $enrollPath -Recurse
+            log "Removed $($enrollPath)."
+        }
+        else
+        {
+            log "No MDM enrollments found."
+        }
+    }
+    $global:enrollID = $enrollPath.Split("\")[-1]
+    $additionaPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Enrollments\Status\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\EnterpriseResourceManager\Tracked\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\PolicyManager\AdmxInstalled\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\PolicyManager\Providers\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\Provinsioning\OMADM\Accounts\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Logger\$($enrollID)",
+        "HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Sessions\$($enrollID)"
+    )
+    foreach($path in $additionaPaths)
+    {
+        if(Test-Path $path)
+        {
+            log "Removing $($path)..."
+            Remove-Item -Path $path -Recurse
+            log "Removed $($path)."
+        }
+        else
+        {
+            log "No additional paths found."
+        }
+    }
+}
+
+# remove mdm scheduled tasks
+function removeMDMTasks()
+{
+    Param(
+        [string]$taskPath = "\Microsoft\Windows\EnterpriseMgmt",
+        [string]$enrollID = $enrollID
+    )
+    $mdmTasks = Get-ScheduledTask -TaskPath "$($taskPath)\$($enrollID)\" -ErrorAction Ignore
+    if($mdmTasks -gt 0)
+    {
+        foreach($task in $mdmTasks)
+        {
+            log "Removing $($task.Name)..."
+            try
             {
-                log "Removing MDM enrollment: $($path)"
-                Remove-Item -Path $path -Recurse
-                log "MDM enrollment removed: $($path)"
+                Unregister-ScheduledTask -TaskName $task.Name -Confirm:$false
+                log "Removed $($task.Name)."
             }
-            else
+            catch
             {
-                log "Skipping MDM enrollment: $($path)"
+                $message = $_.Exception.Message
+                log "Failed to remove $($task.Name): $($message)."
             }
         }
     }
     else
     {
-        log "Skipping MDM enrollment: $($enrollPath)"
+        log "No MDM tasks found."
     }
 }
-
-# remove MDM certificate
-log "Removing MDM certificate..."
-Get-ChildItem -Path 'Cert:\LocalMachine\My' | Where-Object { $_.Issuer -match "Microsoft Intune MDM Device CA" } | Remove-Item -Force
-log "MDM certificate removed"
 
 # set post migration tasks
-log "Setting post migration tasks..."
-$tasks = @("middleBoot","newProfile")
-foreach($task in $tasks)
+function setPostMigrationTasks()
 {
-    $taskPath = "$($settings.localPath)\$($task).xml"
-    if($taskPath)
+    Param(
+        [string]$localPath = $localPath,
+        [array]$tasks = @("middleboot","newProfile")
+    )
+    foreach($task in $tasks)
     {
-        schtasks.exe /Create /TN $task /XML $taskPath
-        log "Post migration task created: $task"
+        $taskPath = "$($localPath)\$($task).xml"
+        if($taskPath)
+        {
+            schtasks.exe /Create /TN $task /XML $taskPath
+            log "Created $($task) task."
+        }
+        else
+        {
+            log "Failed to create $($task) task: $taskPath not found."
+        }     
+    }
+}
+
+# check for AAD join and remove
+function leaveAazureADJoin() {
+    param (
+        [string]$joinType = "AzureAdJoined",
+        [string]$hostname = $deviceInfo.hostname,
+        [string]$dsregCmd = "C:\Windows\System32\dsregcmd.exe"
+    )
+    log "Checking for Azure AD join..."
+    $joinStatus = joinStatus -joinType $joinType
+    if($joinStatus -eq "YES")
+    {
+        log "$hostname is Azure AD joined: leaving..."
+        Start-Process -FilePath $dsregCmd -ArgumentList "/leave"
+        log "Left Azure AD join."
     }
     else
     {
-        log "Post migration task not found: $task"
+        log "$hostname is not Azure AD joined."
     }
-}
-
-# remove device from Intune and Autopilot
-if($pc.mdm -eq $true)
-{
-    log "$($pc.hostname) is enrolled in Intune."
-    if([string]::IsNullOrEmpty($pc.intuneId))
-    {
-        log "IntuneId is null.  Skipping remove device from Intune"
-    }
-    else
-    {
-        log "IntuneId is not null.  Removing from Intune..."
-        try 
-        {
-            Invoke-RestMethod -Uri "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$($pc.intuneId)" -Method Delete -Headers $headers
-        }
-        catch 
-        {
-            $message = $_.Exception.Message
-            log "FUNCTION: removeDeviceFromIntune failed with error: $message"
-            log "Exiting script with non critical error.  Review log files for more information."
-            exitScript -exitCode 4 -functionName "removeDeviceFromIntune"
-        }
-    }
-    if([string]::IsNullOrEmpty($pc.autopilotId))
-    {
-        log "AutopilotId is null.  Skipping remove device from Autopilot"
-    }
-    else
-    {
-        log "AutopilotId is not null.  Removing from Autopilot..."
-        try 
-        {
-            Invoke-RestMethod -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities/$($pc.autopilotId)" -Method Delete -Headers $headers
-        }
-        catch 
-        {
-            $message = $_.Exception.Message
-            log "FUNCTION: removeDeviceFromAutopilot failed with error: $message"
-            log "Exiting script with non critical error.  Review log files for more information."
-            exitScript -exitCode 4 -functionName "removeDeviceFromAutopilot"
-        }
-    }
-}
-
-# revoke login provider
-log "Running FUNCTION: toggleLoginProvider..."
-try
-{
-    toggleLogonProvider -status "disabled"
-    log "FUNCTION: toggleLoginProvider completed successfully"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: toggleLoginProvider failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "toggleLoginProvider"
-}
-
-# create auto logon migration admin
-$migrateAdmin = "MigrationInProgress"
-$migrateAdminPassword = "@Password*123"
-$autoLogonPath = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
-
-log "Creating auto logon migration admin..."
-New-LocalUser -Name $migrateAdmin -Password (ConvertTo-SecureString -String $migrateAdminPassword -AsPlainText -Force)
-Add-LocalGroupMember -Group "Administrators" -Member $migrateAdmin
-reg.exe add $autoLogonPath /v "DefaultUserName" /t REG_SZ /d $migrateAdmin /f | Out-Host
-reg.exe add $autoLogonPath /v "DefaultPassword" /t REG_SZ /d $migrateAdminPassword /f | Out-Host
-
-# set auto logon
-log "Running FUNCTION: setAutoLogon..."
-try
-{
-    toggleAutoLogon -status "enabled"
-    log "FUNCTION: setAutoLogon completed successfully"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: setAutoLogon failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "setAutoLogon"
-}
-
-# set lock screen caption
-log "Running FUNCTION: setLockScreenCaption..."
-try
-{
-    setLockScreenCaption -caption "Migration in progress" -text "This device is being migrated to $($settings.targetTenant.tenantName).  Please do not power off or restart the device."
-    log "FUNCTION: setLockScreenCaption completed successfully"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "FUNCTION: setLockScreenCaption failed with error: $message"
-    log "Exiting script with non critical error.  Review log files for more information."
-    exitScript -exitCode 4 -functionName "setLockScreenCaption"
-}
-
-# leave AzureADJoin
-log "Leaving AzureADJoin..."
-if($pc.azureAdJoined -eq "YES")
-{
-   log "$($pc.hostname) is AzureADJoined.  Running FUNCTION: leaveAzureADJoin..."
-   try 
-   {
-        Start-Process -FilePath "C:\Windows\System32\dsregcmd.exe" -ArgumentList "/leave"
-        log "FUNCTION: leaveAzureADJoin completed successfully" 
-   }
-   catch 
-   {
-        $message = $_.Exception.Message
-        log "FUNCTION: leaveAzureADJoin failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "leaveAzureADJoin"
-   }
-}
-else
-{
-    log "$($pc.hostname) is not AzureADJoined.  Skipping leaveAzureADJoin"
 }
 
 # check for domain join and remove
-log "Checking for domain join and removing..."
-if($pc.domainJoined -eq "YES")
+function unjoinDomain()
 {
-    log "$($pc.hostname) is domainJoined.  Running FUNCTION: removeDomainJoin..."
-    $password = generatePassword -length 12
-    $adminStatus = (Get-LocalUser -Name "Administrator").Enabled
-    if($adminStatus -eq $false)
+    Param(
+        [string]$joinType = "DomainJoined",
+        [string]$hostname = $deviceInfo.hostname
+    )
+    log "Checking for domain join..."
+    $joinStatus = joinStatus -joinType $joinType
+    if($joinStatus -eq "YES")
     {
-        log "Administrator account is disabled.  Enabling account and setting password..."
-        Set-LocalUser -Name "Administrator" -Password $password -PasswordNeverExpires $true
-        Get-LocalUser -Name "Administrator" | Enable-LocalUser
+        $password = generatePassword -length 12
+        log "Checking for local admin account..."
+        $adminStatus = getAdminStatus
+        if($adminStatus -eq $false)
+        {
+            log "Admin account is disabled; setting password and enabling..."
+            Set-LocalUser -Name "Administrator" -Password $password -PasswordNeverExpires $true
+            Get-LocalUser -Name "Administrator" | Enable-LocalUser
+            log "Enabled Administrator account and set password."
+        }
+        else 
+        {
+            log "Admin account is enabled; setting password..."
+            Set-LocalUser -Name "Administrator" -Password $password -PasswordNeverExpires $true
+            log "Set Administrator password."
+        }
+        $cred = New-Object System.Management.Automation.PSCredential ("$hostname\Administrator", $password)
+        log "Unjoining domain..."
+        Remove-Computer -UnjoinDomainCredential $cred -Force -PassThru -Verbose
+        log "$hostname unjoined domain."    
     }
     else
     {
-        log "Administrator account is enabled.  Setting password..."
-        Set-LocalUser -Name "Administrator" -Password $password -PasswordNeverExpires $true
+        log "$hostname is not domain joined."
     }
-    $cred = New-Object System.Management.Automation.PSCredential ("$($pc.hostname)\Administrator", $password)
-    try
-    {
-        Remove-Computer -UnjoinDomainCredential $cred -PassThru -Force -Verbose
-        log "FUNCTION: removeDomainJoin completed successfully"
-    }
-    catch
-    {
-        $message = $_.Exception.Message
-        log "FUNCTION: removeDomainJoin failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "removeDomainJoin"
-    }
-}
-else
-{
-    log "$($pc.hostname) is not domainJoined.  Skipping removeDomainJoin"
 }
 
 # install provisioning package
-log "Installing provisioning package..."
-$ppkg = (Get-ChildItem -Path $($settings.localPath) -Filter "*.ppkg" -Recurse).FullName
-if($ppkg)
+function InstallPPKGPackage()
 {
-    log "Provisioning package found: $($ppkg)"
-    try
+    Param(
+        [string]$osBuild = $deviceInfo.osBuild,
+        [string]$ppkg = (Get-ChildItem -Path $localPath -Filter "*.ppkg" -Recurse).FullName
+    )
+    if($ppkg)
     {
         Install-ProvisioningPackage -PackagePath $ppkg -QuietInstall -Force
-        log "Provisioning package installed"
+        log "Installed provisioning package."
     }
-    catch
+    else 
     {
-        $message = $_.Exception.Message
-        log "Provisioning package install failed with error: $message"
-        log "Exiting script with non critical error.  Review log files for more information."
-        exitScript -exitCode 4 -functionName "installPpkg.ps1"
+        log "Provisioning package not found."
+    }
+    
+}
+
+# delete graph objects in source tenant
+function deleteGraphObjects()
+{
+    Param(
+        [string]$intuneID = $deviceGraphInfo.intuneID,
+        [string]$autopilotID = $deviceGraphInfo.autopilotID,
+        [string]$intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices",
+        [string]$autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
+    )
+    if(![string]::IsNullOrEmpty($intuneID))
+    {
+        Invoke-RestMethod -Uri "$($intuneUri)/$($intuneID)" -Headers $headers -Method Delete
+        Start-Sleep -Seconds 2
+        log "Deleted Intune object."
+    }
+    else
+    {
+        log "Intune object not found."
+    }
+    if(![string]::IsNullOrEmpty($autopilotID))
+    {
+        Invoke-RestMethod -Uri "$($autopilotUri)/$($autopilotID)" -Headers $headers -Method Delete
+        Start-Sleep -Seconds 2
+        log "Deleted Autopilot object."   
+    }
+    else
+    {
+        log "Autopilot object not found."
     }
 }
-else
+
+# revoke logon provider
+function revokeLogonProvider()
 {
-    log "Provisioning package not found"
+    Param(
+        [string]$logonProviderPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}",
+        [string]$logonProviderName = "Disabled",
+        [int]$logonProviderValue = 1
+    )
+    reg.exe add $logonProviderPath /v $logonProviderName /t REG_DWORD /d $logonProviderValue /f | Out-Host
+    log "Revoked logon provider."
 }
 
-log "Exiting script with success"
+# set auto logon policy
+function setAutoLogon()
+{
+    Param(
+        [string]$migrationAdmin = "MigrationInProgress",
+        [string]$autoLogonPath = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
+        [string]$autoLogonName = "AutoAdminLogon",
+        [string]$autoLogonValue = 1,
+        [string]$defaultUserName = "DefaultUserName",
+        [string]$defaultPW = "DefaultPassword"
+    )
+    log "Create migration admin account..."
+    $migrationPassword = generatePassword
+    New-LocalUser -Name $migrationAdmin -Password $migrationPassword
+    Add-LocalGroupMember -Group "Administrators" -Member $migrationAdmin
+    log "Migration admin account created: $($migrationAdmin)."
 
+    log "Setting auto logon..."
+    reg.exe add $autoLogonPath /v $autoLogonName /t REG_SZ /d $autoLogonValue /f | Out-Host
+    reg.exe add $autoLogonPath /v $defaultUserName /t REG_SZ /d $migrationAdmin /f | Out-Host
+    reg.exe add $autoLogonPath /v $defaultPW /t REG_SZ /d "@Password*123" /f | Out-Host
+    log "Set auto logon to $($migrationAdmin)."
+}
+
+# set lock screen caption
+function setLockScreenCaption()
+{
+    Param(
+        [string]$targetTenantName = $settings.targetTenant.tenantName,
+        [string]$legalNoticeRegPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+        [string]$legalNoticeCaption = "legalnoticecaption",
+        [string]$legalNoticeCaptionValue = "Migration in Progress...",
+        [string]$legalNoticeText = "legalnoticetext",
+        [string]$legalNoticeTextValue = "Your PC is being migrated to $targetTenantName and will reboot automatically within 30 seconds.  Please do not turn off your PC."
+    )
+    log "Setting lock screen caption..."
+    reg.exe add $legalNoticeRegPath /v $legalNoticeCaption /t REG_SZ /d $legalNoticeCaptionValue /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v $legalNoticeText /t REG_SZ /d $legalNoticeTextValue /f | Out-Host
+    log "Set lock screen caption."
+}
+
+
+# SCRIPT FUNCTIONS END
+
+# run getSettingsJSON
+try 
+{
+    getSettingsJSON
+    log "Retrieved settings JSON."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to get settings JSON: $message."  
+    log "Exiting script."
+    Exit 1  
+}
+
+# run initializeScript
+try 
+{
+    initializeScript
+    log "Initialized script."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to initialize script: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run copyPackageFiles
+try 
+{
+    copyPackageFiles
+    log "Copied package files."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to copy package files: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run msGraphAuthenticate
+try 
+{
+    msGraphAuthenticate
+    log "Authenticated to MS Graph."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to authenticate to MS Graph: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run getDeviceInfo
+try 
+{
+    getDeviceInfo
+    log "Got device info."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to get device info: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run getOriginalUserInfo
+try 
+{
+    getOriginalUserInfo
+    log "Got original user info."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to get original user info: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run getDeviceGraphInfo
+try 
+{
+    getDeviceGraphInfo
+    log "Got device graph info."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to get device graph info: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run setAccountConnection
+try 
+{
+    setAccountConnection
+    log "Set account connection."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to set account connection: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run dontDisplayLastUsername
+try 
+{
+    dontDisplayLastUsername
+    log "Set dont display last username."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to set dont display last username: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run removeMDMCertificate
+try 
+{
+    removeMDMCertificate
+    log "Removed MDM certificate."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to remove MDM certificate: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run removeMDMEnrollments
+try 
+{
+    removeMDMEnrollments
+    log "Removed MDM enrollments."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to remove MDM enrollments: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run removeMDMTasks
+try 
+{
+    removeMDMTasks
+    log "Removed MDM tasks."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to remove MDM tasks: $message."
+    log "Warning: Validate device integrity post migration."
+}
+
+# run setPostMigrationTasks
+try 
+{
+    setPostMigrationTasks
+    log "Set post migration tasks."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to set post migration tasks: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run leaveAazureADJoin
+try 
+{
+    leaveAazureADJoin
+    log "Left Azure AD join."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to leave Azure AD join: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run unjoinDomain
+try 
+{
+    unjoinDomain
+    log "Unjoined domain."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to unjoin domain: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run InstallPPKGPackage
+try 
+{
+    InstallPPKGPackage
+    log "Installed provisioning package."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to install provisioning package: $message."
+    log "Exiting script."
+    Exit 1
+}
+
+# run deleteGraphObjects
+try 
+{
+    deleteGraphObjects
+    log "Deleted graph objects."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to delete graph objects: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run revokeLogonProvider
+try 
+{
+    revokeLogonProvider
+    log "Revoked logon provider."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to revoke logon provider: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run setAutoLogon
+try 
+{
+    setAutoLogon
+    log "Set auto logon."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to set auto logon: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run setLockScreenCaption
+try 
+{
+    setLockScreenCaption
+    log "Set lock screen caption."
+}
+catch 
+{
+    $message = $_.Exception.Message
+    log "Failed to set lock screen caption: $message."
+    log "WARNING: Validate device integrity post migration."
+}
+
+# run reboot
+log "Rebooting device..."
+shutdown -r -t 30
+
+# end transcript
 Stop-Transcript
