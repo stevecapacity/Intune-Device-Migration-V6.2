@@ -90,31 +90,7 @@ function generatePassword {
 
 # END CMDLET FUNCTIONS
 
-
-
-#  get json settings
-function getSettingsJSON()
-{
-    param(
-        [string]$json = "settings.json"
-    )
-    $settings = Get-Content -Path "$($PSScriptRoot)\$($json)" | ConvertFrom-Json
-    return $settings
-}
-
-# run getSettingsJSON
-try 
-{
-    $settings = getSettingsJSON
-    log "Retrieved settings JSON."
-}
-catch 
-{
-    $message = $_.Exception.Message
-    log "Failed to get settings JSON: $message."  
-    log "Exiting script."
-    exitScript -exitCode 4 -functionName "getSettingsJSON"
-}
+$settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
 # start transcript
 log "Starting transcript..."
@@ -165,7 +141,7 @@ catch
 function copyPackageFiles()
 {
     Param(
-        [string]$destination = $localPath
+        [string]$destination = $settings.localPath
     )
     Copy-Item -Path "$($PSScriptRoot)\*" -Destination $destination -Recurse -Force
     log "Copied files to $($destination)."
@@ -574,7 +550,7 @@ catch
 function setPostMigrationTasks()
 {
     Param(
-        [string]$localPath = $localPath,
+        [string]$localPath = $settings.localPath,
         [array]$tasks = @("middleboot","newProfile")
     )
     foreach($task in $tasks)
@@ -688,7 +664,7 @@ else
 }
 
 # install provisioning package
-$ppkg = (Get-ChildItem -Path $localPath -Filter "*.ppkg" -Recurse).FullName
+$ppkg = (Get-ChildItem -Path $settings.localPath -Filter "*.ppkg" -Recurse).FullName
 if($ppkg)
 {
     log "provioning package found: $($ppkg)."
