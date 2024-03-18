@@ -167,6 +167,8 @@ foreach($x in $userArray)
     }
 }
 
+$domainJoin = Get-ItemPropertyValue -Path $regKey -Name "OG_domainJoined"
+
 # remove aadBrokerPlugin from original profile
 $aadBrokerPath = (Get-ChildItem -Path "$($OG_profilePath)\AppData\Local\Packages" -Recurse | Where-Object {$_.Name -match "Microsoft.AAD.BrokerPlugin_*"} | Select-Object FullName).FullName
 if($aadBrokerPath)
