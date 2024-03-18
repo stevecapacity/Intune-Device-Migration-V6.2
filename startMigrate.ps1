@@ -74,30 +74,6 @@ function exitScript()
     }
 }
 
-# get dsreg status
-function joinStatus()
-{
-    [CmdletBinding()]
-    Param(
-        [Parameter(Mandatory=$true)]
-        [string]$joinType
-    )
-    $dsregStatus = dsregcmd.exe /status
-    $status = ($dsregStatus | Select-String $joinType).ToString().Split(":")[1].Trim()
-    return $status
-}
-
-# function get admin status
-function getAdminStatus()
-{
-    Param(
-        [string]$adminUser = "Administrator"
-    )
-    $adminStatus = (Get-LocalUser -Name $adminUser).Enabled
-    log "Administrator account is $($adminStatus)."
-    return $adminStatus
-}
-
 # generate random password
 function generatePassword {
     Param(
@@ -114,7 +90,7 @@ function generatePassword {
 
 # END CMDLET FUNCTIONS
 
-# SCRIPT FUNCTIONS START
+
 
 #  get json settings
 function getSettingsJSON()
@@ -182,7 +158,7 @@ catch
     $message = $_.Exception.Message
     log "Failed to initialize script: $message."
     log "Exiting script."
-    Exit 1
+    exitScript -exitCode 4 -functionName "initializeScript"
 }
 
 # copy package files
@@ -307,6 +283,204 @@ catch
     log "Exiting script with exit code 4."
     exitScript -exitCode 4 -functionName "dontDisplayLastUsername"
 }
+
+# newDeviceObject function
+function newDeviceObject()
+{
+    Param(
+        [string]$serialNumber = (Get-WmiObject -Class Win32_Bios).serialNumber,
+        [string]$hostname = $env:COMPUTERNAME,
+        [string]$azureAdJoined = (dsregcmd.exe /status | Select-String "AzureAdJoined").ToString().Split(":")[1].Trim(),
+        [string]$domainJoined = (dsregcmd.exe /status | Select-String "DomainJoined").ToString().Split(":")[1].Trim(),
+        [string]$certPath = 'Cert:\LocalMachine\My',
+        [string]$issuer = "Microsoft Intune MDM Device CA",
+        [string]$bitLocker = (Get-BitLockerVolume -MountPoint "C:").ProtectionStatus,
+        [string]$groupTag = $settings.groupTag,
+        [bool]$mdm = $false
+    )
+    $cert = Get-ChildItem -Path $certPath | Where-Object {$_.Issuer -match $issuer}
+    if($cert)
+    {
+        $mdm = $true
+        $intuneObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/managedDevices?`$filter=serialNumber eq '$serialNumber'" -Headers $headers)
+        if(($intuneObject.'@odata.count') -eq 1)
+        {
+            $intuneId = $intuneObject.value.id
+            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.entraId)'" -Headers $headers).value.id
+            $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
+            if(($autopilotObject.'@odata.count') -eq 1)
+            {
+                $autopilotId = $autopilotObject.value.id
+                if([string]::IsNullOrEmpty($groupTag))
+                {
+                    $groupTag = $autopilotObject.value.groupTag
+                }
+                else
+                {
+                    $groupTag = $groupTag
+                }
+            }
+            else
+            {
+                $autopilotId = $null
+            }
+        }
+        else 
+        {
+            $intuneId = $null
+            $entraId = $null
+        }
+    }
+    else
+    {
+        $intuneId = $null
+        $entraId = $null
+        $autopilotId = $null
+    }
+    if([string]::IsNullOrEmpty($groupTag))
+    {
+        $groupTag = $null
+    }
+    else
+    {
+        $groupTag = $groupTag
+    }
+    $pc = @{
+        serialNumber = $serialNumber
+        hostname = $hostname
+        diskSize = $diskSize
+        freeSpace = $freeSpace
+        OSVersion = $OSVersion
+        OSBuild = $OSBuild
+        memory = $memory
+        azureAdJoined = $azureAdJoined
+        domainJoined = $domainJoined
+        bitLocker = $bitLocker
+        mdm = $mdm
+        intuneId = $intuneId
+        entraId = $entraId
+        autopilotId = $autopilotId
+        groupTag = $groupTag
+    }
+    return $pc
+}
+
+# run newDeviceObject
+log "Creating device object..."
+try
+{
+    $pc = newDeviceObject
+    log "Created device object."
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to create device object: $message."
+    log "Exiting script with exit code 4."
+    exitScript -exitCode 4 -functionName "newDeviceObject"
+}
+
+# Write OG PC properties to the registry
+log "Writing OG PC properties to the registry..."
+foreach($x in $pc.Keys)
+{
+    $name = "OG_$($x)"
+    $value = $($pc[$x])
+    $regPath = $settings.regPath
+    try
+    {
+        log "Writing $name to the registry with value $value..."
+        reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
+        log "$name written to registry with value $value."
+    }
+    catch
+    {
+        $message = $_.Exception.Message
+        log "Failed to write $name to the registry - $message."
+        log "Existing script with non critial error.  Please review the log file and attempt to run the script again."
+        exitScript -exitCode 4 -functionName "setRegObject"
+    }
+}
+
+# newUserObject function
+function newUserObject()
+{
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)]
+        [string]$domainJoin,
+        [Parameter(Mandatory=$true)]
+        [string]$aadJoin,
+        [string]$user = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object UserName).UserName,
+        [string]$SID = (New-Object System.Security.Principal.NTAccount($user)).Translate([System.Security.Principal.SecurityIdentifier]).Value,
+        [string]$profilePath = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($SID)" -Name "ProfileImagePath"),
+        [string]$SAMName = ($user).Split("\")[1]
+    )
+    if($domainJoin -eq "NO")
+    {
+        $upn = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache\$($SID)\IdentityCache\$($SID)" -Name "UserName")
+        if($aadJoin -eq "YES")
+        {
+            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/users/$($upn)" -Headers $headers).id
+        }
+        else
+        {
+            $entraId = $null
+        }
+    }
+    else
+    {
+        $upn = $null
+        $entraId = $null
+    }
+    $userObject = @{
+        user = $user
+        SID = $SID
+        profilePath = $profilePath
+        SAMName = $SAMName
+        upn = $upn
+        entraId = $entraId
+    }
+    return $userObject
+}
+
+# run newUserObject
+log "Creating user object..."
+try
+{
+    $user = newUserObject -domainJoin $pc.domainJoined -aadJoin $pc.azureAdJoined
+    log "Created user object."
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to create user object: $message."
+    log "Exiting script with exit code 4."
+    exitScript -exitCode 4 -functionName "newUserObject"
+}
+
+# Write OG User properties to the registry
+log "Writing OG User properties to the registry..."
+foreach($x in $user.Keys)
+{
+    $name = "OG_$($x)"
+    $value = $($user[$x])
+    $regPath = $settings.regPath
+    try
+    {
+        log "Writing $name to the registry with value $value..."
+        reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
+        log "$name written to registry with value $value."
+    }
+    catch
+    {
+        $message = $_.Exception.Message
+        log "Failed to write $name to the registry - $message."
+        log "Existing script with non critial error.  Please review the log file and attempt to run the script again."
+        exitScript -exitCode 4 -functionName "setRegObject"
+    }
+}
+
 
 # remove mdm certificate
 function removeMDMCertificate()
@@ -434,7 +608,7 @@ catch
 }
 
 # check for Azure AD / Entra Join and leave
-if($pc.aadJoin -eq "YES")
+if($pc.azureAdJoined -eq "YES")
 {
     log "PC is Azure AD joined; leaving..."
     try 
@@ -466,14 +640,13 @@ function unjoinDomain()
     Param(
         [Parameter(Mandatory=$true)]
         [string]$unjoinAccount,
-        [Parameter(Mandatory=$true)]
-        [string]$hostname
+        [string]$hostname = $pc.hostname
     )
     log "Unjoining from domain..."
-    $password = generatePassword -length 12
+    $password = generatePassword
     log "Generated password for $unjoinAccount."
     log "Checking $($unjoinAccount) status..."
-    [bool]$acctStatus = getAccountStatus -localAccount $unjoinAccount
+    [bool]$acctStatus = (Get-LocalUser -Name $unjoinAccount).Enabled
     if($acctStatus -eq $false)
     {
         log "$($unjoinAccount) is disabled; setting password and enabling..."
@@ -493,12 +666,12 @@ function unjoinDomain()
     log "Unjoined from domain."
 }
 
-if($pc.domainJoin -eq "YES")
+if($pc.domainJoined -eq "YES")
 {
     log "PC is domain joined; unjoining..."
     try 
     {
-        unjoinDomain -unjoinAccount "Administrator" -hostname $pc.hostname
+        unjoinDomain -unjoinAccount "Administrator"
         log "Unjoined from domain."
     }
     catch 
@@ -508,6 +681,10 @@ if($pc.domainJoin -eq "YES")
         log "Exiting script."
         exitScript -exitCode 4 -functionName "unjoinDomain"
     }
+}
+else
+{
+    log "PC is not domain joined."
 }
 
 # install provisioning package
@@ -531,53 +708,34 @@ if($ppkg)
 else 
 {
     log "Provisioning package not found."
+    exitScript -exitCode 4 -functionName "installProvisioningPackage"
 }
     
 
 # delete graph objects in source tenant
-function deleteGraphObjects()
+$intuneID = $pc.intuneId,
+$autopilotID = $pc.entraId,
+$intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices"
+$autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"    
+if(![string]::IsNullOrEmpty($intuneID))
 {
-    Param(
-        [string]$intuneID = $pc.intuneID,
-        [string]$autopilotID = $pc.autopilotID,
-        [string]$intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices",
-        [string]$autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
-    )
-    if(![string]::IsNullOrEmpty($intuneID))
-    {
-        Invoke-RestMethod -Uri "$($intuneUri)/$($intuneID)" -Headers $headers -Method Delete
-        Start-Sleep -Seconds 2
-        log "Deleted Intune object."
-    }
-    else
-    {
-        log "Intune object not found."
-    }
-    if(![string]::IsNullOrEmpty($autopilotID))
-    {
-        Invoke-RestMethod -Uri "$($autopilotUri)/$($autopilotID)" -Headers $headers -Method Delete
-        Start-Sleep -Seconds 2
-        log "Deleted Autopilot object."   
-    }
-    else
-    {
-        log "Autopilot object not found."
-    }
+    Invoke-RestMethod -Uri "$($intuneUri)/$($intuneID)" -Headers $headers -Method Delete
+    Start-Sleep -Seconds 2
+    log "Deleted Intune object."
 }
-
-# run deleteGraphObjects
-log "Deleting graph objects..."
-try
+else
 {
-    deleteGraphObjects
-    log "Deleted graph objects."
+    log "Intune object not found."
 }
-catch
+if(![string]::IsNullOrEmpty($autopilotID))
 {
-    $message = $_.Exception.Message
-    log "Failed to delete graph objects: $message."
-    log "Exiting script with exit code 4."
-    exitScript -exitCode 4 -functionName "deleteGraphObjects"
+    Invoke-RestMethod -Uri "$($autopilotUri)/$($autopilotID)" -Headers $headers -Method Delete
+    Start-Sleep -Seconds 2
+    log "Deleted Autopilot object."   
+}
+else
+{
+    log "Autopilot object not found."
 }
 
 # revoke logon provider
@@ -652,14 +810,12 @@ function setLockScreenCaption()
     Param(
         [string]$targetTenantName = $settings.targetTenant.tenantName,
         [string]$legalNoticeRegPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
-        [string]$legalNoticeCaption = "legalnoticecaption",
         [string]$legalNoticeCaptionValue = "Migration in Progress...",
-        [string]$legalNoticeText = "legalnoticetext",
         [string]$legalNoticeTextValue = "Your PC is being migrated to $targetTenantName and will reboot automatically within 30 seconds.  Please do not turn off your PC."
     )
     log "Setting lock screen caption..."
-    reg.exe add $legalNoticeRegPath /v $legalNoticeCaption /t REG_SZ /d $legalNoticeCaptionValue /f | Out-Host
-    reg.exe add $legalNoticeRegPath /v $legalNoticeText /t REG_SZ /d $legalNoticeTextValue /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v "legalnoticecaption" /t REG_SZ /d $legalNoticeCaptionValue /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v "legalnoticetext" /t REG_SZ /d $legalNoticeTextValue /f | Out-Host
     log "Set lock screen caption."
 }
 
