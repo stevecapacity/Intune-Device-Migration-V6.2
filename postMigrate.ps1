@@ -27,73 +27,99 @@ function log()
     Write-Output "$ts $message"
 }
 
-# CMDLET FUNCTIONS
-
-# START SCRIPT FUNCTIONS
+# FUNCTION: exitScript
+# PURPOSE: Exit script with error code
+# DESCRIPTION: This function exits the script with an error code.  It takes an exit code, function name, and local path as input and outputs 
+function exitScript()
+{
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)]
+        [int]$exitCode,
+        [Parameter(Mandatory=$true)]
+        [string]$functionName,
+        [string]$localpath = $settings.localPath
+    )
+    if($exitCode -eq 1)
+    {
+        log "Function $($functionName) failed with critical error.  Exiting script with exit code $($exitCode)."
+        log "Will remove $($localpath) and reboot device.  Please log in with local admin credentials on next boot to troubleshoot."
+        Remove-Item -Path $localpath -Recurse -Force -Verbose
+        log "Removed $($localpath)."
+        # enable password logon provider
+        reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}" /v "Disabled" /t REG_DWORD /d 0 /f | Out-Host
+        log "Enabled logon provider."
+        log "rebooting device..."
+        shutdown -r -t 30
+        Stop-Transcript
+        Exit -1
+    }
+    elseif($exitCode -eq 4)
+    {
+        log "Function $($functionName) failed with non-critical error.  Exiting script with exit code $($exitCode)."
+        Remove-Item -Path $localpath -Recurse -Force -Verbose
+        log "Removed $($localpath)."
+        Stop-Transcript
+        Exit 1
+    }
+    else
+    {
+        log "Function $($functionName) failed with unknown error.  Exiting script with exit code $($exitCode)."
+        Stop-Transcript
+        Exit 1
+    }
+}
 
 # get json settings
-function getSettingsJSON()
-{
-    param(
-        [string]$json = "settings.json"
-    )
-    $global:settings = Get-Content -Path "$($PSScriptRoot)\$($json)" | ConvertFrom-Json
-    return $settings
-}
+$settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
 # initialize script
 function initializeScript()
 {
     Param(
-        [string]$logPath = $settings.logPath,
-        [string]$logName = "postMigrate.log",
+        [Parameter(Mandatory=$false)]
+        [bool]$installTag, 
         [string]$localPath = $settings.localPath
     )
-    Start-Transcript -Path "$logPath\$logName" -Verbose
     log "Initializing script..."
     if(!(Test-Path $localPath))
     {
         mkdir $localPath
-        log "Local path created: $localPath"
+        log "Created $($localPath)."
     }
     else
     {
-        log "Local path already exists: $localPath"
+        log "$($localPath) already exists."
     }
-    $global:localPath = $localPath
+    if($installTag -eq $true)
+    {
+        New-Item -Path "$($localPath)\install.tag" -ItemType file -Force
+        log "Created $($installTag)."
+    }
     $context = whoami
-    log "Running as $($context)"
-    log "Script initialized"
-    return $localPath
+    log "Running as $($context)."
+}
+
+# run initializeScript
+log "Running initializeScript..."
+try
+{
+    initializeScript
+    log "initializeScript completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run initializeScript: $message"
+    log "Exiting script..."
+    exitScript -exitCode 4 -functionName "initializeScript"
 }
 
 # disable post migrate task
-function disablePostMigrateTask()
-{
-    Param(
-        [string]$taskName = "postMigrate"
-    )
-    log "Disabling postMigrate task..."
-    Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop
-    log "postMigrate task disabled"
-}
+log "Disabling postMigrate task..."
+Disable-ScheduledTask -TaskName "postMigrate" -ErrorAction Stop
+log "postMigrate task disabled"
 
-# get device info
-function getDeviceInfo()
-{
-    Param(
-        [string]$hostname = $env:COMPUTERNAME,
-        [string]$serialNumber = (Get-WmiObject -Class Win32_BIOS | Select-Object SerialNumber).SerialNumber
-    )
-    $global:deviceInfo = @{
-        "hostname" = $hostname
-        "serialNumber" = $serialNumber
-    }
-    foreach($key in $deviceInfo.Keys)
-    {
-        log "$($key): $($deviceInfo[$key])"
-    }
-}
 
 # authenticate to MS Graph
 function msGraphAuthenticate()
@@ -122,48 +148,87 @@ function msGraphAuthenticate()
     $global:headers = $headers
 }
 
-# get user graph info
-function getGraphInfo()
+# run msGraphAuthenticate
+log "Running msGraphAuthenticate..."
+try
+{
+    msGraphAuthenticate
+    log "msGraphAuthenticate completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run msGraphAuthenticate: $message"
+    log "Exiting script..."
+    exitScript -exitCode 4 -functionName "msGraphAuthenticate"
+}
+
+# newDeviceObject function
+function newDeviceObject()
 {
     Param(
-        [string]$regPath = $settings.regPath,
-        [string]$regKey = "Registry::$regPath",
-        [string]$serialNumber = $deviceInfo.serialNumber,
-        [string]$intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices",
-        [string]$newUserSID = (Get-ItemPropertyValue -Path $regKey -Name "NewUserSID"),
-        [string]$userUri = "https://graph.microsoft.com/beta/users",
-        [string]$upn = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache\$($newUserSID)\IdentityCache\$($newUserSID)" -Name "UserName")
+        [string]$serialNumber = (Get-WmiObject -Class Win32_Bios).serialNumber,
+        [string]$hostname = $env:COMPUTERNAME,
+        [string]$groupTag = $settings.groupTag
     )
-    log "Getting graph info..."
-    $intuneObject = Invoke-RestMethod -Uri "$($intuneUri)?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers -Method Get
+    $intuneObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/managedDevices?`$filter=serialNumber eq '$serialNumber'" -Headers $headers)
     if(($intuneObject.'@odata.count') -eq 1)
     {
-        $global:intuneID = $intuneObject.value.id
-        $global:aadDeviceID = $intuneObject.value.azureADDeviceId
-        log "Intune Device ID: $intuneID, Azure AD Device ID: $aadDeviceID, User ID: $userID"
+        $intuneId = $intuneObject.value.id
+        $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
+    }
+    else 
+    {
+        $intuneId = $null
+    }
+    if([string]::IsNullOrEmpty($groupTag))
+    {
+        try
+        {
+            $groupTag = (Get-ItemProperty -Path "HKLM:\SOFTWARE\IntuneMigration" -Name "OG_groupTag").OG_groupTag
+        }
+        catch
+        {
+            $groupTag = $null
+        }
     }
     else
     {
-        log "Intune object not found"
+        $groupTag = $groupTag
     }
-    $userObject = Invoke-RestMethod -Uri "$userUri/$upn" -Headers $headers -Method Get
-    if(![string]::IsNullOrEmpty($userObject.id))
-    {
-        $global:userID = $userObject.id
-        log "User ID: $userID"
+    $pc = @{
+        serialNumber = $serialNumber
+        hostname = $hostname
+        intuneId = $intuneId
+        groupTag = $groupTag
+        entraId = $entraId
     }
-    else
-    {
-        log "User object not found"
-    }
+    return $pc
+}
+
+# run newDeviceObject
+log "Running newDeviceObject..."
+try
+{
+    $pc = newDeviceObject
+    log "newDeviceObject completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run newDeviceObject: $message"
+    log "Exiting script..."
+    exitScript -exitCode 4 -functionName "newDeviceObject"
 }
 
 # set primary user
 function setPrimaryUser()
 {
     Param(
-        [string]$intuneID = $intuneID,
-        [string]$userID = $userID,
+        [string]$regPath = $settings.regPath,
+        [string]$regKey = "Registry::$regPath",
+        [string]$intuneID = $pc.intuneId,
+        [string]$userID = (Get-ItemProperty -Path $regKey -Name "NEW_EntraId").NEW_entraId,
         [string]$userUri = "https://graph.microsoft.com/beta/users/$userID",
         [string]$intuneDeviceRefUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$intuneID/users/`$ref"
     )
@@ -175,14 +240,28 @@ function setPrimaryUser()
     log "Primary user for $intuneID set to $userID"
 }
 
+# run setPrimaryUser
+log "Running setPrimaryUser..."
+try
+{
+    setPrimaryUser
+    log "setPrimaryUser completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run setPrimaryUser: $message"
+    log "Primary user was not set- set manually in Intune."
+}
+
 # update device group tag
 function updateGroupTag()
 {
     Param(
         [string]$regPath = $settings.regPath,
         [string]$regKey = "Registry::$regPath",
-        [string]$groupTag = (Get-ItemPropertyValue -Path $regKey -Name "GroupTag" -ErrorAction Ignore),
-        [string]$aadDeviceID = $aadDeviceID,
+        [string]$groupTag = $pc.groupTag,
+        [string]$aadDeviceId = $pc.entraId,
         [string]$deviceUri = "https://graph.microsoft.com/beta/devices"
     )
     log "Updating device group tag..."
@@ -204,6 +283,21 @@ function updateGroupTag()
         Invoke-RestMethod -Uri "$deviceUri/$deviceId" -Method Patch -Headers $headers -Body $body
         log "Device group tag updated to $groupTag"      
     }
+}
+
+# run updateGroupTag
+log "Running updateGroupTag..."
+try
+{
+    updateGroupTag
+    log "updateGroupTag completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run updateGroupTag: $message"
+    log "Exiting script..."
+    exitScript -exitCode 4 -functionName "updateGroupTag"
 }
 
 # migrate bitlocker function
@@ -279,159 +373,6 @@ function removeMigrationUser()
     )
     Remove-LocalUser -Name $migrationUser -ErrorAction Stop
     log "Migration user removed"
-}
-
-# END SCRIPT FUNCTIONS
-
-# START SCRIPT
-
-# get settings
-try
-{
-    getSettingsJSON
-    log "Retrieved settings"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Settings not loaded: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# initialize script
-try
-{
-    initializeScript
-    log "Script initialized"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Script not initialized: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# disable post migrate task
-try
-{
-    disablePostMigrateTask
-    log "Post migrate task disabled"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Post migrate task not disabled: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# get device info
-try
-{
-    getDeviceInfo
-    log "Device info retrieved"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Device info not retrieved: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# authenticate to MS Graph
-try
-{
-    msGraphAuthenticate
-    log "MS Graph authenticated"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "MS Graph not authenticated: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# get graph info
-try
-{
-    getGraphInfo
-    log "Graph info retrieved"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Graph info not retrieved: $message"
-    log "Exiting script"
-    Exit 1
-}
-
-# set primary user
-try
-{
-    setPrimaryUser
-    log "Primary user set"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Primary user not set: $message"
-    log "WARNING: Primary user not set- try manually setting in Intune"
-}
-
-# update device group tag
-try
-{
-    updateGroupTag
-    log "Device group tag updated if applicable"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Device group tag not updated: $message"
-    log "WARNING: Device group tag not updated- try manually updating in Intune"
-}
-
-# manage bitlocker
-try
-{
-    manageBitlocker
-    log "Bitlocker managed"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Bitlocker not managed: $message"
-    log "WARNING: Bitlocker not managed- try setting policy manually in Intune"
-}
-
-# reset lock screen caption
-try
-{
-    resetLockScreenCaption
-    log "Lock screen caption reset"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Lock screen caption not reset: $message"
-    log "WARNING: Lock screen caption not reset- try setting manually"
-}
-
-# remove migration user
-try
-{
-    removeMigrationUser
-    log "Migration user removed"
-}
-catch
-{
-    $message = $_.Exception.Message
-    log "Migration user not removed: $message"
-    log "WARNING: Migration user not removed- try removing manually"
 }
 
 # END SCRIPT

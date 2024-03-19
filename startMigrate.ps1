@@ -324,11 +324,6 @@ function newDeviceObject()
     $pc = @{
         serialNumber = $serialNumber
         hostname = $hostname
-        diskSize = $diskSize
-        freeSpace = $freeSpace
-        OSVersion = $OSVersion
-        OSBuild = $OSBuild
-        memory = $memory
         azureAdJoined = $azureAdJoined
         domainJoined = $domainJoined
         bitLocker = $bitLocker
