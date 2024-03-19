@@ -88,8 +88,8 @@ function generatePassword {
     return $securePassword
 }
 
-# END CMDLET FUNCTIONS
 
+# get json settings
 $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
 # start transcript
@@ -138,14 +138,11 @@ catch
 }
 
 # copy package files
-function copyPackageFiles()
-{
-    Param(
-        [string]$destination = $settings.localPath
-    )
-    Copy-Item -Path "$($PSScriptRoot)\*" -Destination $destination -Recurse -Force
-    log "Copied files to $($destination)."
-}
+$destination = $settings.localPath
+log "Copying files to $destination..."
+Copy-Item -Path "$($PSScriptRoot)\*" -Destination $destination -Recurse -Force
+log "Copied files to $($destination)."
+
 
 # authenticate to source tenant
 function msGraphAuthenticate()
@@ -368,7 +365,7 @@ foreach($x in $pc.Keys)
     {
         $message = $_.Exception.Message
         log "Failed to write $name to the registry - $message."
-        log "Existing script with non critial error.  Please review the log file and attempt to run the script again."
+        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
         exitScript -exitCode 4 -functionName "setRegObject"
     }
 }
@@ -447,7 +444,7 @@ foreach($x in $user.Keys)
     {
         $message = $_.Exception.Message
         log "Failed to write $name to the registry - $message."
-        log "Existing script with non critial error.  Please review the log file and attempt to run the script again."
+        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
         exitScript -exitCode 4 -functionName "setRegObject"
     }
 }
@@ -781,12 +778,12 @@ function setLockScreenCaption()
     Param(
         [string]$targetTenantName = $settings.targetTenant.tenantName,
         [string]$legalNoticeRegPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
-        [string]$legalNoticeCaptionValue = "Migration in Progress...",
-        [string]$legalNoticeTextValue = "Your PC is being migrated to $targetTenantName and will reboot automatically within 30 seconds.  Please do not turn off your PC."
+        [string]$caption = "Migration in Progress...",
+        [string]$text = "Your PC is being migrated to $targetTenantName and will reboot automatically within 30 seconds.  Please do not turn off your PC."
     )
     log "Setting lock screen caption..."
-    reg.exe add $legalNoticeRegPath /v "legalnoticecaption" /t REG_SZ /d $legalNoticeCaptionValue /f | Out-Host
-    reg.exe add $legalNoticeRegPath /v "legalnoticetext" /t REG_SZ /d $legalNoticeTextValue /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v "legalnoticecaption" /t REG_SZ /d $caption /f | Out-Host
+    reg.exe add $legalNoticeRegPath /v "legalnoticetext" /t REG_SZ /d $text /f | Out-Host
     log "Set lock screen caption."
 }
 

@@ -70,28 +70,8 @@ function exitScript()
     }
 }
 
-# get json settings
-function getSettingsJSON()
-{
-    param(
-        [string]$json = "settings.json"
-    )
-    $settings = Get-Content -Path "$($PSScriptRoot)\$($json)" | ConvertFrom-Json
-    return $settings
-}
-
-# run getSettingsJSON
-log "Getting settings JSON..."
-try
-{
-    $settings = getSettingsJSON
-    log "Settings JSON retrieved"
-}
-catch
-{
-    log "Failed to retrieve settings JSON"
-    exitScript -exitCode 1 -functionName "getSettingsJSON"
-}
+# get settings from JSON
+$settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
 # start transcript
 log "Starting transcript..."

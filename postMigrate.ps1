@@ -73,6 +73,10 @@ function exitScript()
 # get json settings
 $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
+# start transcript
+log "Starting transcript..."
+Start-Transcript -Path "$(settings.$logPath)\postMigrate.log" -Verbose
+
 # initialize script
 function initializeScript()
 {
@@ -331,24 +335,48 @@ function decryptDrive()
 }
 
 # manage bitlocker
-function manageBitlocker()
+# if bitlockerMethod is MIGRATE, run migrateBitlocker function
+if($settings.bitlockerMethod -eq "migrate")
 {
-    Param(
-        [string]$bitlockerMethod = $settings.bitlockerMethod
-    )
-    log "Getting bitlocker action..."
-    if($bitlockerMethod -eq "Migrate")
+    log "Running FUNCTION: migrateBitlocker..."
+    try
     {
-        migrateBitlockerKey
+        migrateBitlocker
+        log "FUNCTION: migrateBitlocker completed successfully."
     }
-    elseif($bitlockerMethod -eq "Decrypt")
+    catch
+    {
+        $message = $_.Exception.Message
+        log "FUNCTION: migrateBitlocker failed - $message."
+        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
+        exitScript -exitCode 4 -functionName "migrateBitlocker"
+    }
+}
+else 
+{
+    log "Bitlocker method is not MIGRATE. Skipping migrateBitlocker function."
+}
+
+# if bitlockerMethod is DECRYPT, run decryptDrive function
+if($settings.bitlockerMethod -eq "decrypt")
+{
+    log "Running FUNCTION: decryptDrive..."
+    try
     {
         decryptDrive
+        log "FUNCTION: decryptDrive completed successfully."
     }
-    else
+    catch
     {
-        log "Bitlocker method not set. Skipping..."
+        $message = $_.Exception.Message
+        log "FUNCTION: decryptDrive failed - $message."
+        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
+        exitScript -exitCode 4 -functionName "decryptDrive"
     }
+}
+else 
+{
+    log "Bitlocker method is not DECRYPT. Skipping decryptDrive function."
 }
 
 # reset legal notice policy
@@ -365,17 +393,27 @@ function resetLockScreenCaption()
     log "Lock screen caption reset"
 }
 
-# remove migration user
-function removeMigrationUser()
+# run resetLockScreenCaption
+log "Running resetLockScreenCaption..."
+try
 {
-    Param(
-        [string]$migrationUser = "MigrationInProgress"
-    )
-    Remove-LocalUser -Name $migrationUser -ErrorAction Stop
-    log "Migration user removed"
+    resetLockScreenCaption
+    log "resetLockScreenCaption completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run resetLockScreenCaption: $message"
+    log "Exiting script..."
+    exitScript -exitCode 4 -functionName "resetLockScreenCaption"
 }
 
-# END SCRIPT
+# remove migration user
+log "Removing migration user..."
+Remove-LocalUser -Name "MigrationInProgress" -ErrorAction Stop
+log "Migration user removed"
 
+
+# END SCRIPT
 
 Stop-Transcript

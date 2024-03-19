@@ -73,6 +73,10 @@ function exitScript()
 # get json settings
 $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Json
 
+# start transcript
+log "Starting transcript..."
+Start-Transcript -Path "$(settings.$logPath)\finalBoot.log" -Verbose
+
 # initialize script
 function initializeScript()
 {
