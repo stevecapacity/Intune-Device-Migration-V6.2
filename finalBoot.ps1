@@ -265,6 +265,21 @@ function cleanupLogonCache()
     }
 }
 
+# run cleanupLogonCache
+log "Running cleanupLogonCache..."
+try
+{
+    cleanupLogonCache
+    log "cleanupLogonCache completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run cleanupLogonCache: $message"
+    log "Exiting script..."
+    exitScript -exitCode 1 -functionName "cleanupLogonCache"
+}
+
 # cleanup identity store cache
 function cleanupIdentityStore()
 {
@@ -310,6 +325,28 @@ function cleanupIdentityStore()
             }
         }
     }
+}
+
+# run cleanup logon cache if not domain joined
+if($domainJoin -eq "NO")
+{
+    log "Running cleanupLogonCache..."
+    try
+    {
+        cleanupLogonCache
+        log "cleanupLogonCache completed"
+    }
+    catch
+    {
+        $message = $_.Exception.Message
+        log "Failed to run cleanupLogonCache: $message"
+        log "Exiting script..."
+        exitScript -exitCode 1 -functionName "cleanupLogonCache"
+    }
+}
+else
+{
+    log "Machine is domain joined - skipping cleanupLogonCache."
 }
 
 # update samname in identityStore LogonCache (this is required when displaynames are the same in both tenants, and new samname gets random characters added at the end)
@@ -428,6 +465,21 @@ function updateSamNameLogonCache()
     }
 }
 
+# run updateSamNameLogonCache
+log "Running updateSamNameLogonCache..."
+try
+{
+    updateSamNameLogonCache
+    log "updateSamNameLogonCache completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run updateSamNameLogonCache: $message"
+    log "Exiting script..."
+    exitScript -exitCode 1 -functionName "updateSamNameLogonCache"
+}
+
 # update samname in identityStore Cache (this is required when displaynames are the same in both tenants, and new samname gets random characters added at the end)
 function updateSamNameIdentityStore()
 {
@@ -482,6 +534,28 @@ function updateSamNameIdentityStore()
     {
         log "New username is $NEW_SAMName, which does not match older username ($OG_SAMName) with _##### appended to end. SamName IdentityStore registry will not be updated."
     }
+}
+
+# run updateSamNameIdentityStore if not domain joined
+if($domainJoin -eq "NO")
+{
+    log "Running updateSamNameIdentityStore..."
+    try
+    {
+        updateSamNameIdentityStore
+        log "updateSamNameIdentityStore completed"
+    }
+    catch
+    {
+        $message = $_.Exception.Message
+        log "Failed to run updateSamNameIdentityStore: $message"
+        log "Exiting script..."
+        exitScript -exitCode 1 -functionName "updateSamNameIdentityStore"
+    }
+}
+else
+{
+    log "Machine is domain joined - skipping updateSamNameIdentityStore."
 }
 
 # set display last user name policy
