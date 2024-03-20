@@ -75,7 +75,7 @@ $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Jso
 
 # start transcript
 log "Starting transcript..."
-Start-Transcript -Path "$(settings.$logPath)\middleBoot.log" -Verbose
+Start-Transcript -Path "$($settings.logPath)\middleBoot.log" -Verbose
 
 # initialize script
 function initializeScript()

@@ -75,7 +75,7 @@ $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Jso
 
 # start transcript
 log "Starting transcript..."
-Start-Transcript -Path "$(settings.$logPath)\finalBoot.log" -Verbose
+Start-Transcript -Path "$($settings.logPath)\finalBoot.log" -Verbose
 
 # initialize script
 function initializeScript()
@@ -135,6 +135,21 @@ function disableAutoLogon()
     log "Disabling auto logon..."
     reg.exe add $autoLogonPath /v $autoAdminLogon /t REG_SZ /d $autoAdminLogonValue /f | Out-Host
     log "Auto logon disabled"
+}
+
+# run disableAutoLogon
+log "Running disableAutoLogon..."
+try
+{
+    disableAutoLogon
+    log "disableAutoLogon completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run disableAutoLogon: $message"
+    log "Exiting script..."
+    exitScript -exitCode 1 -functionName "disableAutoLogon"
 }
 
 # get new and old user data from registry
@@ -198,6 +213,21 @@ function deleteNewUserProfile()
     log "New user profile deleted"
 }
 
+# run deleteNewUserProfile
+log "Running deleteNewUserProfile..."
+try
+{
+    deleteNewUserProfile
+    log "deleteNewUserProfile completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run deleteNewUserProfile: $message"
+    log "Exiting script..."
+    exitScript -exitCode 1 -functionName "deleteNewUserProfile"
+}
+
 # change ownership of original profile
 function changeOriginalProfileOwner()
 {
@@ -213,6 +243,21 @@ function changeOriginalProfileOwner()
     }
     $originalProfile | Invoke-CimMethod -MethodName ChangeOwner -Arguments $changeArguments
     Start-Sleep -Seconds 1
+}
+
+# run changeOriginalProfileOwner
+log "Running changeOriginalProfileOwner..."
+try
+{
+    changeOriginalProfileOwner
+    log "changeOriginalProfileOwner completed"
+}
+catch
+{
+    $message = $_.Exception.Message
+    log "Failed to run changeOriginalProfileOwner: $message"
+    log "Exiting script..."
+    exitScript -exitCode 1 -functionName "changeOriginalProfileOwner"
 }
 
 # cleanup identity store cache

@@ -94,7 +94,7 @@ $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Jso
 
 # start transcript
 log "Starting transcript..."
-Start-Transcript -Path "$(settings.$logPath)\startMigrate.log" -Verbose
+Start-Transcript -Path "$($settings.logPath)\startMigrate.log" -Verbose
 
 # initialize script
 function initializeScript()
@@ -279,7 +279,7 @@ function newDeviceObject()
         if(($intuneObject.'@odata.count') -eq 1)
         {
             $intuneId = $intuneObject.value.id
-            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.entraId)'" -Headers $headers).value.id
+            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
             $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
             if(($autopilotObject.'@odata.count') -eq 1)
             {
@@ -355,18 +355,25 @@ foreach($x in $pc.Keys)
     $name = "OG_$($x)"
     $value = $($pc[$x])
     $regPath = $settings.regPath
-    try
+    if(![string]::IsNullOrEmpty($value))
     {
-        log "Writing $name to the registry with value $value..."
-        reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
-        log "$name written to registry with value $value."
+        try
+        {
+            log "Writing $name to the registry with value $value..."
+            reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
+            log "$name written to registry with value $value."
+        }
+        catch
+        {
+            $message = $_.Exception.Message
+            log "Failed to write $name to the registry - $message."
+            log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
+            exitScript -exitCode 4 -functionName "setRegObject"
+        }
     }
-    catch
+    else
     {
-        $message = $_.Exception.Message
-        log "Failed to write $name to the registry - $message."
-        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
-        exitScript -exitCode 4 -functionName "setRegObject"
+        log "No value for $name."
     }
 }
 
@@ -434,18 +441,25 @@ foreach($x in $user.Keys)
     $name = "OG_$($x)"
     $value = $($user[$x])
     $regPath = $settings.regPath
-    try
+    if(![string]::IsNullOrEmpty($value))
     {
-        log "Writing $name to the registry with value $value..."
-        reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
-        log "$name written to registry with value $value."
+        try
+        {
+            log "Writing $name to the registry with value $value..."
+            reg.exe add $regPath /v $name /t REG_SZ /d $value /f | Out-Host
+            log "$name written to registry with value $value."
+        }
+        catch
+        {
+            $message = $_.Exception.Message
+            log "Failed to write $name to the registry - $message."
+            log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
+            exitScript -exitCode 4 -functionName "setRegObject"
+        }
     }
-    catch
+    else
     {
-        $message = $_.Exception.Message
-        log "Failed to write $name to the registry - $message."
-        log "Exiting script with non critial error.  Please review the log file and attempt to run the script again."
-        exitScript -exitCode 4 -functionName "setRegObject"
+        log "No value for $name."
     }
 }
 
@@ -523,19 +537,19 @@ function removeMDMEnrollments()
     }
 }
 
-# remove mdm scheduled tasks
-log "Removing MDM scheduled tasks..."
+# run removeMDMEnrollments
+log "Removing MDM enrollments..."
 try
 {
-    removeMDMTasks
-    log "Removed MDM scheduled tasks."
+    removeMDMEnrollments
+    log "Removed MDM enrollments."
 }
 catch
 {
     $message = $_.Exception.Message
-    log "Failed to remove MDM scheduled tasks: $message."
+    log "Failed to remove MDM enrollments: $message."
     log "Exiting script with exit code 4."
-    exitScript -exitCode 4 -functionName "removeMDMTasks"
+    exitScript -exitCode 4 -functionName "removeMDMEnrollments"
 }
 
 # set post migration tasks
@@ -581,7 +595,7 @@ if($pc.azureAdJoined -eq "YES")
     log "PC is Azure AD joined; leaving..."
     try 
     {
-        Start-Process -FilePath "dsregcmd.exe" -ArgumentList "/leave"
+        Start-Process -FilePath "C:\Windows\System32\dsregcmd.exe" -ArgumentList "/leave"
         log "Left Azure AD."
     }
     catch 
@@ -681,8 +695,8 @@ else
     
 
 # delete graph objects in source tenant
-$intuneID = $pc.intuneId,
-$autopilotID = $pc.entraId,
+$intuneID = $pc.intuneId
+$autopilotID = $pc.entraId
 $intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices"
 $autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"    
 if(![string]::IsNullOrEmpty($intuneID))

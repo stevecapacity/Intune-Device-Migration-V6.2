@@ -75,7 +75,7 @@ $settings = Get-Content -Path "$($PSScriptRoot)\settings.json" | ConvertFrom-Jso
 
 # start transcript
 log "Starting transcript..."
-Start-Transcript -Path "$(settings.$logPath)\newProfile.log" -Verbose
+Start-Transcript -Path "$($settings.logPath)\newProfile.log" -Verbose
 
 # initialize script
 function initializeScript()
@@ -222,7 +222,7 @@ foreach($x in $user.Keys)
 
 # disable newProfile task
 log "Disabling newProfile task..."
-Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop
+Disable-ScheduledTask -TaskName "newProfile"
 log "newProfile task disabled"    
 
 
