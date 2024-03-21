@@ -372,26 +372,26 @@ function cleanupIdentityStore()
     }
 }
 
-# run cleanup logon cache if not domain joined
+# run cleanup identity store cache if not domain joined
 if($domainJoin -eq "NO")
 {
-    log "Running cleanupLogonCache..."
+    log "Running cleanupIdentityStore..."
     try
     {
-        cleanupLogonCache
-        log "cleanupLogonCache completed"
+        cleanupIdentityStore
+        log "cleanupIdentityStore completed"
     }
     catch
     {
         $message = $_.Exception.Message
-        log "Failed to run cleanupLogonCache: $message"
+        log "Failed to run cleanupIdentityStore: $message"
         log "Exiting script..."
-        exitScript -exitCode 1 -functionName "cleanupLogonCache"
+        exitScript -exitCode 1 -functionName "cleanupIdentityStore"
     }
 }
 else
 {
-    log "Machine is domain joined - skipping cleanupLogonCache."
+    log "Machine is domain joined - skipping cleanupIdentityStore."
 }
 
 # update samname in identityStore LogonCache (this is required when displaynames are the same in both tenants, and new samname gets random characters added at the end)
