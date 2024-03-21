@@ -279,7 +279,7 @@ function newDeviceObject()
         if(($intuneObject.'@odata.count') -eq 1)
         {
             $intuneId = $intuneObject.value.id
-            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
+            $entraDeviceId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
             $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
             if(($autopilotObject.'@odata.count') -eq 1)
             {
@@ -301,13 +301,13 @@ function newDeviceObject()
         else 
         {
             $intuneId = $null
-            $entraId = $null
+            $entraDeviceId = $null
         }
     }
     else
     {
         $intuneId = $null
-        $entraId = $null
+        $entraDeviceId = $null
         $autopilotId = $null
     }
     if([string]::IsNullOrEmpty($groupTag))
@@ -326,7 +326,7 @@ function newDeviceObject()
         bitLocker = $bitLocker
         mdm = $mdm
         intuneId = $intuneId
-        entraId = $entraId
+        entraDeviceId = $entraDeviceId
         autopilotId = $autopilotId
         groupTag = $groupTag
     }

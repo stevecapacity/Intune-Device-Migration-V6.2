@@ -179,7 +179,7 @@ function newDeviceObject()
     if(($intuneObject.'@odata.count') -eq 1)
     {
         $intuneId = $intuneObject.value.id
-        $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
+        $entraDeviceId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
     }
     else 
     {
@@ -205,7 +205,7 @@ function newDeviceObject()
         hostname = $hostname
         intuneId = $intuneId
         groupTag = $groupTag
-        entraId = $entraId
+        entraDeviceId = $entraDeviceId
     }
     return $pc
 }
@@ -265,7 +265,7 @@ function updateGroupTag()
         [string]$regPath = $settings.regPath,
         [string]$regKey = "Registry::$regPath",
         [string]$groupTag = $pc.groupTag,
-        [string]$aadDeviceId = $pc.entraId,
+        [string]$aadDeviceId = $pc.entraDeviceId,
         [string]$deviceUri = "https://graph.microsoft.com/beta/devices"
     )
     log "Updating device group tag..."
@@ -275,7 +275,7 @@ function updateGroupTag()
     }
     else
     {
-        $aadObject = Invoke-RestMethod -Method Get -Uri "$($deviceUri)?`$filter=deviceId eq '$($aadDeviceId)'" -Headers $headers
+        $aadObject = Invoke-RestMethod -Method Get -Uri "$($deviceUri)/$($aadDeviceId)" -Headers $headers
         $physicalIds = $aadObject.value.physicalIds
         $deviceId = $aadObject.value.id
         $groupTag = "[OrderID]:$($groupTag)"
