@@ -6,9 +6,9 @@
  The migration solution has now been updated to not require any transfer of files from the original user profile to the new user, along with other improvements.
 
  ## **NEW FOR 6.2**
- - **ERROR HANDLING**: The "exitScript" function is available and can handle two types of exits:
-  - **code 1**: Exit code 1 will automatically run if there are failures during the middleBoot or finalBoot scripts when the logon provider has been revoked.  If an error occurs, the machine will automatically reboot and re-enable the password provider to allow a local admin to log in and collect logs.
-  - **code 4**: Exit code 4 will run if the script fails while logged in, clean up remaining installation files, and a local admin can review logs and re-run the application.
+  - **ERROR HANDLING**: The "exitScript" function is available and can handle two types of exits:
+   - **code 1**: Exit code 1 will automatically run if there are failures during the middleBoot or finalBoot scripts when the logon provider has been revoked.  If an error occurs, the machine will automatically reboot and re-enable the password provider to allow a local admin to log in and collect logs.
+   - **code 4**: Exit code 4 will run if the script fails while logged in, clean up remaining installation files, and a local admin can review logs and re-run the application.
  - **GENERAL IMPROVEMENTS**: Updates to the way device and user information is gathered from the device and used in migration
 
  ## **NEW FOR 6.1**
