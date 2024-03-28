@@ -10,6 +10,7 @@
     - **code 1**: Exit code 1 will automatically run if there are failures during the middleBoot or finalBoot scripts when the logon provider has been revoked.  If an error occurs, the machine will automatically reboot and re-enable the password provider to allow a local admin to log in and collect logs.
     - **code 4**: Exit code 4 will run if the script fails while logged in, clean up remaining installation files, and a local admin can review logs and re-run the application.
  - **GENERAL IMPROVEMENTS**: Updates to the way device and user information is gathered from the device and used in migration
+ - **PACKAGING**: IntuneWinAppUtil.exe is now included to make it easier to package
 
  ## **NEW FOR 6.1**
  - **FUNCTIONS**: The Intune Device Migration solution is now handled with PowerShell functions to make everything more modular and efficient
