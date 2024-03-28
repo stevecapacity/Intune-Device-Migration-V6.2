@@ -275,33 +275,25 @@ function newDeviceObject()
     if($cert)
     {
         $mdm = $true
-        $intuneObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/managedDevices?`$filter=serialNumber eq '$serialNumber'" -Headers $headers)
-        if(($intuneObject.'@odata.count') -eq 1)
+        $intuneId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match $issuer} | Select-Object Subject).Subject).TrimStart("CN=")
+        $entraDeviceId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match "MS-Organization-Access"} | Select-Object Subject).Subject).TrimStart("CN=")
+        $entraObjectId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($entraDeviceId)'" -Headers $headers).value.id
+        $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
+        if(($autopilotObject.'@odata.count') -eq 1)
         {
-            $intuneId = $intuneObject.value.id
-            $entraDeviceId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
-            $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
-            if(($autopilotObject.'@odata.count') -eq 1)
+            $autopilotId = $autopilotObject.value.id
+            if([string]::IsNullOrEmpty($groupTag))
             {
-                $autopilotId = $autopilotObject.value.id
-                if([string]::IsNullOrEmpty($groupTag))
-                {
-                    $groupTag = $autopilotObject.value.groupTag
-                }
-                else
-                {
-                    $groupTag = $groupTag
-                }
+                $groupTag = $autopilotObject.value.groupTag
             }
             else
             {
-                $autopilotId = $null
+                $groupTag = $groupTag
             }
         }
-        else 
+        else
         {
-            $intuneId = $null
-            $entraDeviceId = $null
+            $autopilotId = $null
         }
     }
     else
@@ -326,7 +318,7 @@ function newDeviceObject()
         bitLocker = $bitLocker
         mdm = $mdm
         intuneId = $intuneId
-        entraDeviceId = $entraDeviceId
+        entraObjectId = $entraObjectId
         autopilotId = $autopilotId
         groupTag = $groupTag
     }
@@ -696,7 +688,7 @@ else
 
 # delete graph objects in source tenant
 $intuneID = $pc.intuneId
-$autopilotID = $pc.entraId
+$autopilotID = $pc.autopilotId
 $intuneUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices"
 $autopilotUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"    
 if(![string]::IsNullOrEmpty($intuneID))

@@ -173,18 +173,11 @@ function newDeviceObject()
     Param(
         [string]$serialNumber = (Get-WmiObject -Class Win32_Bios).serialNumber,
         [string]$hostname = $env:COMPUTERNAME,
-        [string]$groupTag = $settings.groupTag
-    )
-    $intuneObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/managedDevices?`$filter=serialNumber eq '$serialNumber'" -Headers $headers)
-    if(($intuneObject.'@odata.count') -eq 1)
-    {
-        $intuneId = $intuneObject.value.id
-        $entraDeviceId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($intuneObject.value.azureADDeviceId)'" -Headers $headers).value.id
-    }
-    else 
-    {
-        $intuneId = $null
-    }
+        [string]$intuneId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match "Microsoft Intune MDM Device CA"} | Select-Object Subject).Subject).TrimStart("CN="),
+        [string]$entraDeviceId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match "MS-Organization-Access"} | Select-Object Subject).Subject).TrimStart("CN=")
+    )    
+    
+    $entraObjectId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($entraDeviceId)'" -Headers $headers).value.id
     if([string]::IsNullOrEmpty($groupTag))
     {
         try
@@ -205,7 +198,7 @@ function newDeviceObject()
         hostname = $hostname
         intuneId = $intuneId
         groupTag = $groupTag
-        entraDeviceId = $entraDeviceId
+        entraObjectId = $entraObjectId
     }
     return $pc
 }
@@ -223,6 +216,11 @@ catch
     log "Failed to run newDeviceObject: $message"
     log "Exiting script..."
     exitScript -exitCode 4 -functionName "newDeviceObject"
+}
+
+foreach($x in $pc.Keys)
+{
+    log "$($x): $($pc[$x])"
 }
 
 # set primary user
@@ -265,7 +263,7 @@ function updateGroupTag()
         [string]$regPath = $settings.regPath,
         [string]$regKey = "Registry::$regPath",
         [string]$groupTag = $pc.groupTag,
-        [string]$aadDeviceId = $pc.entraDeviceId,
+        [string]$aadDeviceId = $pc.entraObjectId,
         [string]$deviceUri = "https://graph.microsoft.com/beta/devices"
     )
     log "Updating device group tag..."
@@ -276,15 +274,18 @@ function updateGroupTag()
     else
     {
         $aadObject = Invoke-RestMethod -Method Get -Uri "$($deviceUri)/$($aadDeviceId)" -Headers $headers
-        $physicalIds = $aadObject.value.physicalIds
-        $deviceId = $aadObject.value.id
+        $physicalIds = $aadObject.physicalIds
+        log "physicalIds: $physicalIds"
         $groupTag = "[OrderID]:$($groupTag)"
+        log "groupTag: $groupTag"
         $physicalIds += $groupTag
+        log "new physicalIds: $physicalIds"
 
         $body = @{
             physicalIds = $physicalIds
         } | ConvertTo-Json
-        Invoke-RestMethod -Uri "$deviceUri/$deviceId" -Method Patch -Headers $headers -Body $body
+        log "body: $body"
+        Invoke-RestMethod -Uri "$deviceUri/$aadDeviceId" -Method Patch -Headers $headers -Body $body
         log "Device group tag updated to $groupTag"      
     }
 }
@@ -341,7 +342,7 @@ if($settings.bitlockerMethod -eq "migrate")
     log "Running FUNCTION: migrateBitlocker..."
     try
     {
-        migrateBitlocker
+        migrateBitlockerKey
         log "FUNCTION: migrateBitlocker completed successfully."
     }
     catch
