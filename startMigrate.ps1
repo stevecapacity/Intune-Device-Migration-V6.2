@@ -608,6 +608,8 @@ else
 # DESCRIPTION: This function unjoins from the domain.  It takes an unjoin account and hostname as input and outputs the status to the console.  If the account is disabled, it will enable the account and set the password.  If the account is enabled, it will set the password.
 # INPUTS: $unjoinAccount (string), $hostname (string)
 # OUTPUTS: example; Unjoined from domain
+
+# IMPORTANT!  For the PC to unjoin the domain, line-of-sight must be broken.  This can be done by changing the DNS server to a non-domain DNS server.  To use this, uncomment line 621 through 628.
 function unjoinDomain()
 {
     [CmdletBinding()]
@@ -616,6 +618,15 @@ function unjoinDomain()
         [string]$unjoinAccount,
         [string]$hostname = $pc.hostname
     )
+    <#log "Breaking line of sight to domain..."
+    $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -ExpandProperty InterfaceAlias
+    $dns = Get-DnsClientServerAddress -InterfaceAlias $adapter | Select-Object -ExpandProperty ServerAddresses
+    if($dns -ne '8.8.8.8')
+    {
+        log "Breaking line of sight to domain..."
+        Set-DnsClientServerAddress -InterfaceAlias $adapter -ServerAddresses ("8.8.8.8","8,8,4,4")
+        log "Broke line of sight to domain."
+    }#>
     log "Unjoining from domain..."
     $password = generatePassword
     log "Generated password for $unjoinAccount."
