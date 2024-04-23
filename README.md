@@ -80,7 +80,7 @@ Using a custom solution that leverages PowerShell scripting, Microsoft Graph API
 * Intune configurations have been validated with device enrollment
 
 ## Technical flow
-The migration solution is comprised of several scripts and files that are compiled into an *.intunewin* file using the [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool).  When the application is installed, the **startMigrate.ps1** script is launched and begins to orchestrate the migration.
+The migration solution is comprised of several scripts and files that are compiled into an *.intunewin* file using the [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool).  When the application is installed, the **startMigrate.ps1** script is launched and begins to orchestrate the migration.  A provisioning package must be created using the [Windows Configuration Designer](https://learn.microsoft.com/en-us/windows/configuration/provisioning-packages/provisioning-install-icd).
 
 Once the migration starts, the solution goes through 8 phases:
 
