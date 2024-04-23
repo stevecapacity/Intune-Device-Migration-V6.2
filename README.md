@@ -120,7 +120,7 @@ Once the migration starts, the solution goes through 8 phases:
 * Toggle auto logon *on*
 * Change lock screen message
 
-**3rd Reboot**
+***3rd Reboot***
 
 ### Phase 6 | Change owner
 * New user profile is deleted
