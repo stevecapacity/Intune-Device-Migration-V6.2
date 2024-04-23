@@ -1,132 +1,146 @@
-# Intune Device Migration V6 - 6.2 UPDATE
- V6 (Removes need for profile migration)
+# Intune Device Migration
 
- Intune Intune device migration V6 is available now.
+## Overview
+As business continue to move endpoint management to the cloud, the need for solutions beyond standard onboarding is growing.  Mergers, acquisitions, and divestitures between companies using Microsoft Intune require Windows PCs be moved from one tenant to another.
 
- The migration solution has now been updated to not require any transfer of files from the original user profile to the new user, along with other improvements.
+The **Intune Device Migration** solution allows devices to be offboarded from their existing tenant and automatically joined to their destination in a matter of minutes; all while retaining user data.
 
- ## **NEW FOR 6.2**
-  - **ERROR HANDLING**: The "exitScript" function is available and can handle two types of exits:
-    - **code 1**: Exit code 1 will automatically run if there are failures during the middleBoot or finalBoot scripts when the logon provider has been revoked.  If an error occurs, the machine will automatically reboot and re-enable the password provider to allow a local admin to log in and collect logs.
-    - **code 4**: Exit code 4 will run if the script fails while logged in, clean up remaining installation files, and a local admin can review logs and re-run the application.
- - **GENERAL IMPROVEMENTS**: Updates to the way device and user information is gathered from the device and used in migration
- - **PACKAGING**: IntuneWinAppUtil.exe is now included to make it easier to package
-
- ## **NEW FOR 6.1**
- - **FUNCTIONS**: The Intune Device Migration solution is now handled with PowerShell functions to make everything more modular and efficient
- - **LOCK SCREENS**: I'll admit it first; the idea of using lock screen images was short sighted and not good.  So now, we are taking advantage of the "Legal notice" policy to set lock screen messages dynamicly to each phase of the migration
-
- ## User data
- The updated process for preserving the user profile is as follows:
- - During *startMigrate.ps1*, the **original user** SID is captured and stored in the registry.
- - After device leaves source tenant and signs into destination tenant, the **new user** SID is captured and stored in the registry
- - In the final reboot (*finalBoot.ps1*), the follow actions take place
-    - **New user** profile Cim Instance is deleted
-    - **Original user** profile is edited via Invoke-Method on the Cim Instance to change the owner to the **new user** SID
-    - Registry cleanup is performed to remove cached instances of the **original user** UPN, email address, and logon info from cache
-
-## BitLocker method
-In the *settings.json*, you can set whether BitLocker migrates the key to target tenant or starts a decryption for new policy.
-
-## Settings JSON
-The following variables are now set in the **settings.json** file.
-
-## Logging
-Logs are now stored in "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs" so they can be exported from Intune.
-
-### Required variables
-> Because the settings file is in JSON format, backslashes must be doubled to avoid issues.  For example, ***C:\ProgramData\IntuneMigration*** will be written as ***C:\\\\ProgramData\\\\IntuneMigration***.  Don't worry as they will output correctly into the PowerShell code.
-
-**$localPath**:
-* *This is the local path that all working files will be stored on within the client machine.  It is recommended to keep this as the default **C:\ProgramData\IntuneMigration***
-
-**$logPath**:
-* *This is the default Intune Management Extension log directory.  The migration solution will write all logs here so they can be remotely captured with Intune.*
-
-**$sourceTenant**
-* **$clientID**:
-    * *The app registration client ID in the source Azure tenant*
-* **$clientSecret**:
-    * *The client secret value for the app registration*
-* **$tenantName**:
-    * *Source tenant domain name*
-
-
-**$targetTenant**
-* **$clientID**:
-    * *The app registration client ID in the target Azure tenant*
-* **$clientSecret**:
-    * *The client secret value for the app registration*
-* **$tenantName**:
-    * *Target tenant domain name*
-* **$tenantID**:
-    * *Target tenant ID*
-
-**$groupTag**:
-* *Specify Group Tag to be used in destination tenant with Autopilot.  If using an existing tag in the source tenant, leave blank*
-
-**$bitlockerMethod**:
-* *Specifies method for managing Bitlocker migration (MIGRATE/DECRYPT)*
-
-**$regPath**:
-* *Registry path needed to write local migration attributes to.  It is recommended to keep this as the default **HKLM\SOFTWARE\IntuneMigration***
-
-
-## Provisioning package
-A Windows Provisioning Package is required for the migration solution to work.  This can be created with the Windows Configuration Designer application found here:
-https://apps.microsoft.com/detail/9NBLGGH4TX22?hl=en-US&gl=US
-
-Instructions for generating the package and troubleshooting can be found here:
-https://www.getrubix.com/blog/tenant-to-tenant-intune-device-migration-part-4-the-bulk-token
-
-## Application registrations
-App registrations are created in both **Tenant A** and **Tenant B**. This will be the primary means of authenticating objects throughout the various scripts used in the process.
-
-Both registratinos will require the following permissions:
+Using a custom solution that leverages PowerShell scripting, Microsoft Graph API, and Windows provisioning packages, organizations can migrate Windows PCs between tenants with minimal downtime and user disruption.
+## Requirements
+### Access
+* Organization resources will require global administrator privileges to the M365 environment.
+* Consultant or implementation resources will require the following access components:
+    * User account
+    * Intune and Entra ID P1 or P2 license
+    * Intune Administrator role
+### Graph API Permissions (Source and Destination tenant)
+*Application permissions*
 * Device.ReadWrite.All
-* DeviceManagementApps.ReadWrite.All
 * DeviceManagementConfiguration.ReadWrite.All
 * DeviceManagementManagedDevices.PrivilegedOperations.All
 * DeviceManagementManagedDevices.ReadWrite.All
 * DeviceManagementServiceConfig.ReadWrite.All
 * User.ReadWrite.All
+### Tenant
+* Entra ID connect must be configured to support Microsoft Account login:
+    * Entra ID Premium subscription and a verified domain name.
+    * Configured identity provider (IdP) to support the WS-Federation protocol and the SAML 2.0 token format.
+    * Registered IdP as an enterprise application in Azure AD and assigned users or groups to it.
+    * Enable Entra ID connect for their IdP in the Azure portal and provide the required metadata and settings.
+* PCs must be in the following state:
+    * Entra ID joined.
+    * Intune managed.
+### Technical
+* PC requirements:
+    * Windows 10 Build 22H2 (19045)
+    * Windows 11 Build 22H2 (22621)
+    * Minimum 8GB RAM
+    * Minimum 256GB SSD storage
+    * 64-bit CPU or System on a Chip (SoC) with two or more cores (4 is recommended)
+    * Trusted Platform Module (TPM) version 2.0 or higher
+    * Internet connection
+* Network requirements:
+    * The internet connection supports HTTPS over port 443.
+    * The internet connection allows connections to the Microsoft online services endpoints.
+    * The internet connection does not require authentication or use a proxy that requires authentication.
+    * The Microsoft online services URLs needed are:
+        * https://*.manage.microsoft.com
+        * https://*.manage.microsoftazure.us
+        * https://*.msazure.cn
+        * https://*.microsoftonline.com
+        * https://*.microsoftonline-p.com
+        * https://*.microsoftonline.us
+        * https://*.microsoftonline.de
+        * https://*.microsoftonline.cn
+### Licensing
+* All users must be licensed for Microsoft Intune, either as a standalone service or as part of a bundle such as Microsoft 365 E3 or E5. 
+* All users must be licensed for Entra ID Premium, either as a standalone service or as part of a bundle such as Microsoft 365 E3 or E5.
+* Devices that are enrolled with Autopilot must also have a Windows 10 Enterprise E3 or E5 license, or an equivalent license that includes the Windows 10/11 Enterprise Subscription Activation (ESU) feature, otherwise the PC will remain with Windows Pro
 
-## Migration solution overview
-Tenant to tenant Microsoft Intune device migration As more and more organizations adopt Intune to manage PCs, this was an inevitable scenario. Companies can split into several companies, business acquire new businesses, organizations divest; all reasons you may need to move a PC to a different tenant. This isn’t new, as Active Directory domain migrations are a prevalent process.
+## Assumptions
+### Source tenant
+* Users are assigned licensing to be entitled to Entra ID P1 and Intune P1
+* Devices are Entra ID joined, domain joined, or hybrid domain joined
+* Devices are enrolled to Intune and actively managed
 
-But when your PC is Azure AD joined, Autopilot registered, and Intune managed, the only way to move it is to wipe or reimage the device, de-register it from Autopilot, and start all over again in the new tenant. Well, the only “official” way as supported by Microsoft.
+### User migration
+* User identities from source tenant have been migrated to destination tenant
+* User data has been migrated from source to destination tenant including:
+    * SharePoint
+    * OneDrive
+    * Exchange Online
+    * Teams
 
-Wiping a PC, re-registering it, and waiting for it to go through the Autopilot provisioning process again probably takes a minimum of 2 hours, at best. At worst, you could have users going a whole day or more without a working machine. That’s not good. At least that’s what a large customer of mine thought about 3 years ago when they were facing a divestiture.
+### Destination tenant
+* Users are assigned licensing to be entitled to Entra ID P1 and Intune P1
+* Intune is configured to support the migrated Windows devices including:
+    * **Policy configuration**
+    * **Applications**
+    * **Settings**
+* Intune configurations have been validated with device enrollment
 
-This customer had roughly 15,000 Windows machines deployed via Autopilot and Intune. Due to the divestiture, about half of those users would now belong to a new Azure AD tenant, and their PC would need to move to a new Intune environment as well. While evaluating how to move PCs, they were very clear that any extended downtime was unacceptable, despite Microsoft stating this is “just how the process works”.
+## Technical flow
+The migration solution is comprised of several scripts and files that are compiled into an *.intunewin* file using the [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool).  When the application is installed, the **startMigrate.ps1** script is launched and begins to orchestrate the migration.
 
-The customer asked me if there was anyway to automate this process to streamline it and make the end user experience as quick and painless as possible. After some tinkering, Jesse (my lead solutions architect) and I came up with a workable solution. It wasn’t perfect, but it worked, requiring nothing more than one reboot. This more than satisfied our customer’s ask.
+Once the migration starts, the solution goes through 8 phases:
 
-Since that time, we have been gradually refining the process, adding more capabilities and automating more pieces. Finally, I believe it is at a point where it can be shared and hopefully help those who are in a similar situation.
+### Phase 1 | Gather
+* Package files are coppied locally to device
+* Authenticate to **Source tenant** via Graph API
+* Gather device and user info in current state
+### Phase 2 | Prepare
+* Set local security policy to allow migration
+* Create scheduled tasks (initial)
+* Add "MigrationInProgress" admin account
+* Configure lock screen policy
+### Phase 3 | Remove
+* Delete MDM device certificate
+* Remove MDM enrollment entries from registry
+* 'Unjoin' from Entra ID
+* If device is domain or hybrid joined, remove from domain
+* Toggle auto logon *on*
+* Delete Intune object from **Source tenant**
+* Delete Autopilot object from **Source tenant**
+* Install provisioning package to join **Destination tenant**
 
-### Who can use this?
-If you’ve made it this far, or have had any hands-on experience with Intune, you’re probably wondering what we did to accomplish this crazy task. Let’s start with some assumptions, before getting into to the actual solution.
+***1st Reboot***
 
-For clarity’s sake, we will be referring to the two Azure tenants as **Tenant A** and **Tenant B**.
-**Tenant A** will be the source, or original tenant from which we are migrating from.
+### Phase 4 | Join
+* Disable first set of scheduled tasks
+* Toggle auto logon *off*
+* Change lock screen message
 
-**Tenant B** will be the target, or destination tenant from which we are migration to.
+***2nd Reboot***
 
-We will assume the following about **Tenant A**:
+### Phase 5 | New sign in
+* User signs in with **Destination tenant** credentials
+* Authenticate to **Destination tenant** via Graph API
+* Collect 'new' user info
+* Set final migration scheduled tasks
+* Toggle auto logon *on*
+* Change lock screen message
 
-* Users have a minimum license of Intune and Azure AD Premium P1
-* Devices are registered in Autopilot
-* Devices are Azure AD joined (not local Active Directory joined)
-* Devices are enrolled in Intune
+**3rd Reboot**
 
-Now with any migration, an actual migration has to occur. Let’s make the following assumptions about that migration:
+### Phase 6 | Change owner
+* New user profile is deleted
+* Original user profile owner is changed to new SID
+* Clean up registry
 
-* New identities have been created for users in **Tenant B**
-* User Microsoft online data (Exchange online, OneDrive, SharePoint) has been staged and transitioned to **Tenant B**
+***4th (and final) Reboot***
 
-We will then assume the following about **Tenant B**:
+### Phase 7 | Post migrate
+* Authenticate to **Destination tenant** via Graph API
+* Disable final migration tasks
+* Set primary user in **Destination tenant** Intune
+* Set Group tag (Entra ID attribute)
+* Migrate BitLocker key
 
-* Users have a minimum license of Intune and Azure AD Premium P1
-* Intune has been configured to support the desired configurations, applications, and policy to support devices
+### Phase 8 | Autopilot registration
+* Authenticate to **Destination tenant** via Graph API
+* Collect hardware info (hw hash)
+* Register PC to Autopilot
 
+## Migration Architecture
+![image](./Device%20Migration%20V6.2.png)
 
