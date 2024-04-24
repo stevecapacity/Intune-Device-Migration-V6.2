@@ -14,13 +14,17 @@ Using a custom solution that leverages PowerShell scripting, Microsoft Graph API
     * Intune and Entra ID P1 or P2 license
     * Intune Administrator role
 ### Graph API Permissions (Source and Destination tenant)
-*Application permissions*
-* Device.ReadWrite.All
-* DeviceManagementConfiguration.ReadWrite.All
-* DeviceManagementManagedDevices.PrivilegedOperations.All
-* DeviceManagementManagedDevices.ReadWrite.All
-* DeviceManagementServiceConfig.ReadWrite.All
-* User.ReadWrite.All
+*Application permissions and brief description of their purpose*
+* **Device.ReadWrite.All**
+    * Set device group tag attribute prior to Autopilot
+* **DeviceManagementManagedDevices.ReadWrite.All**
+    * Set the primary user
+    * Remove devie from Intune
+* **DeviceManagementServiceConfig.ReadWrite.All**
+    * Required for Autopilot registration
+    * Remove device from Autopilot
+* **User.Read.All**
+    * Get user attributes from Entra
 ### Tenant
 * Entra ID connect must be configured to support Microsoft Account login:
     * Entra ID Premium subscription and a verified domain name.
