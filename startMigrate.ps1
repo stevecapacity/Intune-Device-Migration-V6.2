@@ -764,7 +764,9 @@ function setAutoLogon()
     log "Create migration admin account..."
     $migrationPassword = generatePassword
     New-LocalUser -Name $migrationAdmin -Password $migrationPassword
-    Add-LocalGroupMember -Group "Administrators" -Member $migrationAdmin
+    $adminGroup = Get-WmiObject -Query "Select * From Win32_Group Where LocalAccount = TRUE And SID = 'S-1-5-32-544'"
+    $adminGroupName = $adminGroup.Name
+    Add-LocalGroupMember -Group $adminGroupName -Member $migrationAdmin
     log "Migration admin account created: $($migrationAdmin)."
 
     log "Setting auto logon..."
