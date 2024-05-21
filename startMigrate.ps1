@@ -388,7 +388,12 @@ function newUserObject()
         $upn = (Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache\$($SID)\IdentityCache\$($SID)" -Name "UserName")
         if($aadJoin -eq "YES")
         {
-            $entraId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/users/$($upn)" -Headers $headers).id
+            $text = $SID.Replace('S-1-12-1-','')
+            $array = [UInt32[]].$text.Split('-')
+            $bytes = New-Object 'Byte[]' 16
+            [Buffer]::BlockCopy($array, 0, $bytes, 0, 16)
+            [Guid]$guid = $bytes
+            $entraId = $guid
         }
         else
         {
