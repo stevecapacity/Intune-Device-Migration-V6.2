@@ -277,7 +277,6 @@ function newDeviceObject()
         $mdm = $true
         $intuneId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match $issuer} | Select-Object Subject).Subject).TrimStart("CN=")
         $entraDeviceId = ((Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Issuer -match "MS-Organization-Access"} | Select-Object Subject).Subject).TrimStart("CN=")
-        $entraObjectId = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/devices?`$filter=deviceId eq '$($entraDeviceId)'" -Headers $headers).value.id
         $autopilotObject = (Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=contains(serialNumber,'$($serialNumber)')" -Headers $headers)
         if(($autopilotObject.'@odata.count') -eq 1)
         {
@@ -318,7 +317,7 @@ function newDeviceObject()
         bitLocker = $bitLocker
         mdm = $mdm
         intuneId = $intuneId
-        entraObjectId = $entraObjectId
+        entraDeviceId = $entraDeviceId
         autopilotId = $autopilotId
         groupTag = $groupTag
     }
@@ -618,7 +617,7 @@ function unjoinDomain()
         [string]$unjoinAccount,
         [string]$hostname = $pc.hostname
     )
-    <#log "Breaking line of sight to domain..."
+    #log "Breaking line of sight to domain..."
     $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -ExpandProperty InterfaceAlias
     $dns = Get-DnsClientServerAddress -InterfaceAlias $adapter | Select-Object -ExpandProperty ServerAddresses
     if($dns -ne '8.8.8.8')
@@ -626,7 +625,7 @@ function unjoinDomain()
         log "Breaking line of sight to domain..."
         Set-DnsClientServerAddress -InterfaceAlias $adapter -ServerAddresses ("8.8.8.8","8,8,4,4")
         log "Broke line of sight to domain."
-    }#>
+    }
     log "Unjoining from domain..."
     $password = generatePassword
     log "Generated password for $unjoinAccount."
