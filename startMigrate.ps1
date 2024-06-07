@@ -623,7 +623,7 @@ function unjoinDomain()
     if($dns -ne '8.8.8.8')
     {
         log "Breaking line of sight to domain..."
-        Set-DnsClientServerAddress -InterfaceAlias $adapter -ServerAddresses ("8.8.8.8","8,8,4,4")
+        Set-DnsClientServerAddress -InterfaceAlias $adapter -ServerAddresses ("8.8.8.8","8.8.4.4")
         log "Broke line of sight to domain."
     }
     log "Unjoining from domain..."
