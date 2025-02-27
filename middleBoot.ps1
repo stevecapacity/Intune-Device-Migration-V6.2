@@ -9,7 +9,7 @@ This script is intended to be run as a scheduled task.  The task is created by t
 Steve Weiner
 .CONTRIBUTORS
 Logan Lautt
-Jesse Weimer
+
 #>
 
 $ErrorActionPreference = "SilentlyContinue"

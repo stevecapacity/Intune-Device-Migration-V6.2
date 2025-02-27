@@ -12,7 +12,7 @@ When deploying with Microsoft Intune, the install command must be "%WinDir%\Sysn
 Steve Weiner
 .CONTRIBUTORS
 Logan Lautt
-Jesse Weimer
+
 #>
 
 $ErrorActionPreference = "SilentlyContinue"
